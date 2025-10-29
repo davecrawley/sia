@@ -1,0 +1,44 @@
+[package]
+name = "sia"
+version = "0.0.1"
+edition = "2021"
+authors = ["David Crawley <dc@ubiquityrobotics.com>"]
+description = "System Information Analyzer - Live system/thermal/monitoring UI"
+license = "BSD 3 Clause"
+homepage = "https://github.com/davecrawley/sia"
+
+[[bin]]
+name = "sia"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { version = "0.28", features = ["wgpu"] }
+egui = "0.28"
+egui_plot = "0.28"
+sysinfo = { version = "0.29", default-features = false, features = ["multithread"] }
+once_cell = "1.19"
+thiserror = "1.0"
+
+# Optional NVIDIA support
+nvml-wrapper = { version = "=0.11.0", optional = true }
+
+[features]
+default = ["nvidia"]
+nvidia = ["nvml-wrapper"]
+
+[package.metadata.deb]
+maintainer = "David Crawley <dc@ubiquityrobotics.com>"
+copyright = "2025, David Crawley <dc@ubiquityrobotics.com>"
+license-file = ["LICENSE", "0"]
+extended-description = """\
+SIA (System Information Analyzer) provides real-time monitoring \
+of CPU, RAM, GPU utilization and comprehensive temperature tracking \
+from hwmon sensors."""
+depends = "$auto, libgl1, libx11-6, libxrandr2, libxi6"
+section = "utils"
+priority = "optional"
+assets = [
+    ["target/release/sia", "usr/bin/", "755"],
+    ["deb_assets/sia.desktop", "usr/share/applications/", "644"],
+    ["deb_assets/sia.png", "usr/share/pixmaps/sia.png", "644"],
+]

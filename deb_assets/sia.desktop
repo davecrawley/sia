@@ -1,0 +1,9 @@
+# snap/gui/sia.desktop
+[Desktop Entry]
+Type=Application
+Name=SIA
+Comment=System Information Analyzer
+Exec=sia
+Icon=sia.png
+Terminal=false
+Categories=Utility;System;
