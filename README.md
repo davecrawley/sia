@@ -20,9 +20,13 @@ A clean, elegant, and useful system monitoring tool.
 * Elegant simplicity: Only display the information you need
 * Developer-friendly: Written in Rust — small, fast, and easy to contribute to.
 
-I built this because I wanted something better — and I’d love your help making it even better. Pull requests, ideas, and performance tweaks are all welcome. If you think other tools are too noisy or annoying, you’re in the right place.
+I built this because I wanted something better — and I’d love your help making it even better. Pull requests, ideas, and performance tweaks are all welcome. If you think other tools are too noisy or annoying, this is for you.
 
-## 
+---
+
+## Distribution
+
+A .deb is available here:
 
 https://github.com/davecrawley/sia/releases/download/Initial/sia_0.0.1-1_amd64.deb
 
@@ -38,6 +42,7 @@ After installation, run:
 ```bash
 sia
 ```
+Or just look for a picture of a singer with a bow on her head in your app finder.
 
 ### Build from source (optional)
 
