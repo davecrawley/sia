@@ -30,7 +30,7 @@ A .deb is available here:
 
 https://github.com/davecrawley/sia/releases/download/Initial/sia_0.0.1-1_amd64.deb
 
-### Quick install (Debian/Ubuntu)
+## Quick install (Debian/Ubuntu)
 
 ```bash
 wget https://github.com/davecrawley/sia/releases/download/Initial/sia_0.0.1-1_amd64.deb
@@ -44,7 +44,7 @@ sia
 ```
 Or just look for a picture of a singer with a bow on her head in your app finder.
 
-### Build from source (optional)
+## Build from source (optional)
 
 ```bash
 git clone https://github.com/davecrawley/sia.git
@@ -56,14 +56,15 @@ The compiled binary will be in `target/release/sia`.
 
 ---
 
-### Feedback
+## How you can help
 
+The number one thing we need help with is testing. It was designed and tested on a system that was intel/nvidia based but because the probes and outputs are so system dependent, we can't be sure whether they will still work on hardware from companies that do things a little differently. Even things like the UI could break on systems that have a different number of sensors than the one on which it was designed. So please try it and tell us whether its working right.
 If you spot a bug or have an idea to make SIA better, open an [issue on GitHub](https://github.com/davecrawley/sia/issues) or submit a pull request.  
 Let’s keep system monitoring simple, elegant, and actually useful.
 
 ## Changes I'd like to see
 
-* Pefromance improvements, performance improvements, performance improvements - a system monitoring tool should consume the minimum ofsystem resources
+* Pefromance improvements, performance improvements, performance improvements - a system monitoring tool should consume the minimum of system resources
 * Headless operation - provide an equivalent system monitoring features from a web-page that can be acceessed remotely
 * CSV file triggering - so that data can be analyzed later
 * Triggering inside the code - so you can correlate what your code is doing to how the system is performing
