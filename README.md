@@ -1,5 +1,4 @@
-This software was born of annoyance. I couldn't find a utility that cleanly displayed system temperatures at the same time as telling me the utilization rates of system components. The graphical diagnostic systems that were available deluged their graphs with lots of useless information from multiple redundant places, used hard to decipher names for system resources and overall the things that I saw were inelegant, annoying to use and didn't really tell me the information I wanted. The first version was coded in a few hours.
-
+This software was born of annoyance. I couldn't find a utility that cleanly displayed system temperatures at the same time as telling me the utilization rates of system components. The graphical diagnostic systems that were available deluged their graphs with lots of useless information from multiple redundant places, used hard to decipher names for system resources and overall the things that I saw were inelegant, annoying to use and didn't really tell me the information I wanted. I quickly pulled together a verison that didn't have these shortcomings.
 ---
 
 # SIA - The System Information Analyzer
