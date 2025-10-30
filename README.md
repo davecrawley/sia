@@ -66,7 +66,7 @@ Let’s keep system monitoring simple, elegant, and actually useful.
 ## Changes I'd like to see
 
 * Pefromance improvements, performance improvements, performance improvements - a system monitoring tool should consume the minimum of system resources
-* Headless operation - provide an equivalent system monitoring features from a web-page that can be acceessed remotely
+* Headless operation - provide an equivalent system monitoring features from a web-page that can be accessed remotely
 * CSV file triggering - so that data can be analyzed later
 * Triggering inside the code - so you can correlate what your code is doing to how the system is performing
 
