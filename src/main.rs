@@ -193,20 +193,33 @@ fn build_groups() -> Vec<SensorGroup> {
     let mut map: BTreeMap<String, SensorGroup> = BTreeMap::new();
     for (idx, s) in HWMON_SENSORS.iter().enumerate() {
         let (key, display, warn, hot) = classify(&s.raw_name);
-        let entry = map.entry(key.clone()).or_insert(SensorGroup { key: key.clone(), display: display.clone(), items: vec![], visible: true, warn, hot, show_thresholds: false });
+        let entry = map.entry(key.clone()).or_insert(SensorGroup {
+            key: key.clone(),
+            display: display.clone(),
+            items: vec![],
+            visible: true,
+            warn,
+            hot,
+            show_thresholds: false,
+        });
         let label = nice_label(&display, &s.raw_label);
         entry.items.push(SensorItem { name: label, idx, visible: false, color: Color32::WHITE });
     }
-    // defaults: prefer composite/package
+
+    // defaults: prefer composite/package/system/wifi/ethernet
     for g in map.values_mut() {
         let mut showed = false;
         for it in &mut g.items {
             let n = it.name.to_lowercase();
             let is_composite = n.contains("composite") || n.contains("package") || n.contains("core)");
-            if !showed && (is_composite || g.display.contains("Wi‑Fi Controller") || g.display.contains("Ethernet Controller") || g.display.contains("System Temperature")) { it.visible = true; showed = true; }
+            if !showed && (is_composite || g.display.contains("Wi‑Fi Controller") || g.display.contains("Ethernet Controller") || g.display.contains("System Temperature")) {
+                it.visible = true;
+                showed = true;
+            }
         }
         if !showed { if let Some(first) = g.items.first_mut() { first.visible = true; } }
     }
+
     // assign colors per group with gentle tints so the same thing stays the same color across plots
     for g in map.values_mut() {
         let base = theme_color(&g.key);
@@ -214,84 +227,98 @@ fn build_groups() -> Vec<SensorGroup> {
             it.color = tint(base, (i as f32) * 0.08);
         }
     }
-    // sort sensible order
+
+    // sort items within groups
     for g in map.values_mut() {
         if g.display.starts_with("CPU") {
             g.items.sort_by(|a, b| {
                 fn key(name: &str) -> (u8, i32, String) {
                     let ln = name.to_lowercase();
-                    let mut tier: u8 = 3; if ln.contains("package") || ln.contains("composite") { tier = 0; } else if ln.contains("cpu (core ") { tier = 1; }
+                    let mut tier: u8 = 3;
+                    if ln.contains("package") || ln.contains("composite") { tier = 0; }
+                    else if ln.contains("cpu (core ") { tier = 1; }
                     let mut idx: i32 = i32::MAX;
-                    if let Some(start) = ln.find("cpu (core ") { if let Some(end) = ln[start+11..].find(')') { let num = &ln[start+11..start+11+end]; idx = num.parse::<i32>().unwrap_or(i32::MAX); } }
+                    if let Some(start) = ln.find("cpu (core ") {
+                        if let Some(end) = ln[start+11..].find(')') {
+                            let num = &ln[start+11..start+11+end];
+                            idx = num.parse::<i32>().unwrap_or(i32::MAX);
+                        }
+                    }
                     (tier, idx, ln)
                 }
                 key(&a.name).cmp(&key(&b.name))
             });
         } else if g.display.starts_with("GPU") {
             g.items.sort_by(|a, b| {
-                fn tier(name: &str) -> u8 { let n=name.to_lowercase(); if n.contains("edge") {0} else if n.contains("hotspot") {1} else {2} }
+                fn tier(name: &str) -> u8 {
+                    let n = name.to_lowercase();
+                    if n.contains("edge") { 0 } else if n.contains("hotspot") { 1 } else { 2 }
+                }
                 tier(&a.name).cmp(&tier(&b.name)).then(a.name.cmp(&b.name))
             });
+        } else {
+            g.items.sort_by(|a, b| a.name.cmp(&b.name));
         }
     }
+
+    // collect & order groups: CPU, GPU, NVMe SSD, Memory (SPD), Wi‑Fi, Ethernet, others
     let mut v: Vec<_> = map.into_values().collect();
-    // order groups: CPU, GPU, NVMe SSD, Memory (SPD), Wi‑Fi, Ethernet, others
     fn rank(key: &str) -> i32 { match key { "cpu"=>0, "gpu"=>1, "nvme"=>2, "ramspd"=>3, "wifi"=>4, "eth"=>5, _=>6 } }
     v.sort_by_key(|g| rank(&g.key));
     v
 }
 
-// ===================== Legend placement =====================
+// ===================== App model =====================
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum LegendPlacement { Footer, Side }
 
-// ===================== App =====================
 struct App {
     // meta
     start: Instant,
     sys: System,
+
     // utilization series
     cpu_util: RollingSeries,
     ram_util: RollingSeries,
     gpu_util: RollingSeries,
     vram_util: RollingSeries,
-    // temps
+
+    // temps & freq
     temp_series: Vec<RollingSeries>,
-    // per-core CPU freq (kHz)
-    freq_series: Vec<RollingSeries>,
+    freq_series: Vec<RollingSeries>,       // CPU core kHz
     freq_visible: Vec<bool>,
     freq_colors: Vec<Color32>,
-    // groups
+
+    // sensor groups
     groups: Vec<SensorGroup>,
-    // time & sampling
+
+    // sampling
     seconds: f64,
     sample_period: Duration,
     last_tick: Instant,
+
     // UI state
     display_window_secs: f64,
-    link_zoom: bool,
-    x_bounds_link: Option<(f64,f64)>,
-    temp_y_range: Option<(f64,f64)>,
     legend_place: LegendPlacement,
     ui_font_size: f32,
     ui_font_color: Color32,
     pending_ui_font_size: f32,
     pending_ui_font_color: Color32,
     live_font_preview: bool,
-    // NV
+
+    // NVIDIA (optional)
     #[cfg(feature = "nvidia")]
     nv: Option<nvgpu::NvState>,
     #[cfg(feature = "nvidia")]
     gpu_temp_idx: Option<usize>,
-    // GPU clocks (MHz)
     #[cfg(feature = "nvidia")]
-    gpu_clk_graphics: RollingSeries,
+    gpu_clk_graphics: RollingSeries,   // MHz
     #[cfg(feature = "nvidia")]
-    gpu_clk_sm: RollingSeries,
+    gpu_clk_sm: RollingSeries,         // MHz
     #[cfg(feature = "nvidia")]
-    gpu_clk_mem: RollingSeries,
+    gpu_clk_mem: RollingSeries,        // MHz
     #[cfg(feature = "nvidia")]
-    gpu_clk_video: RollingSeries,
+    gpu_clk_video: RollingSeries,      // MHz
     #[cfg(feature = "nvidia")]
     gpu_freq_graphics_vis: bool,
     #[cfg(feature = "nvidia")]
@@ -306,20 +333,26 @@ struct App {
 
 impl App {
     fn new(capacity_secs: usize, sample_hz: f64) -> Self {
-        let mut sys = System::new_all(); sys.refresh_all();
-        let mut temp_series = HWMON_SENSORS.iter().map(|_| RollingSeries::new(capacity_secs)).collect::<Vec<_>>();
-        let mut groups = build_groups();
+        let mut sys = System::new_all();
+        sys.refresh_all();
+
+        let groups = build_groups();
+        let temp_series = HWMON_SENSORS.iter().map(|_| RollingSeries::new(capacity_secs)).collect::<Vec<_>>();
         let freq_series = FREQ_SENSORS.iter().map(|_| RollingSeries::new(capacity_secs)).collect::<Vec<_>>();
         let freq_visible = FREQ_SENSORS.iter().map(|_| true).collect::<Vec<_>>();
-        let pal = palette(); let mut freq_colors = vec![]; for i in 0..FREQ_SENSORS.len() { freq_colors.push(pal[i % pal.len()]); }
+        let pal = palette();
+        let mut freq_colors = Vec::with_capacity(FREQ_SENSORS.len());
+        for i in 0..FREQ_SENSORS.len() { freq_colors.push(pal[i % pal.len()]); }
 
         #[cfg(feature = "nvidia")]
         let nv_opt = nvgpu::NvState::try_new();
         #[cfg(feature = "nvidia")]
-        let gpu_temp_idx_opt: Option<usize> = {
+        let (mut temp_series, mut groups, gpu_temp_idx_opt) = {
+            let mut temp_series = temp_series;
+            let mut groups = groups;
             let idx = temp_series.len();
             temp_series.push(RollingSeries::new(capacity_secs));
-            // ensure GPU temp item exists in group
+            // Ensure GPU group exists and add synthetic GPU temp line
             if let Some(g) = groups.iter_mut().find(|g| g.display.starts_with("GPU")) {
                 g.items.push(SensorItem { name: "GPU (Core)".into(), idx, visible: true, color: Color32::WHITE });
             } else {
@@ -327,39 +360,35 @@ impl App {
                 g.items.push(SensorItem { name: "GPU (Core)".into(), idx, visible: true, color: Color32::WHITE });
                 groups.push(g);
             }
-            // keep GPU sorted right after CPU
+            // keep GPU sorted after CPU
             fn rank(key: &str) -> i32 { match key { "cpu"=>0, "gpu"=>1, "nvme"=>2, "ramspd"=>3, "wifi"=>4, "eth"=>5, _=>6 } }
             groups.sort_by_key(|g| rank(&g.key));
-            // color for new item
-            let pal = palette(); let total_items: usize = groups.iter().map(|gg| gg.items.len()).sum();
-            let color = pal[total_items % pal.len()];
-            if let Some(g) = groups.iter_mut().find(|g| g.display.starts_with("GPU")) { if let Some(it) = g.items.last_mut() { it.color = color; } }
-            Some(idx)
+            (temp_series, groups, Some(idx))
         };
         #[cfg(not(feature = "nvidia"))]
-        let nv_opt: Option<()> = None;
-        #[cfg(not(feature = "nvidia"))]
-        let gpu_temp_idx_opt: Option<usize> = None;
+        let (nv_opt, gpu_temp_idx_opt) = (None::<()> as Option<()>, None::<usize>);
 
         Self {
-            start: Instant::now(), sys,
+            start: Instant::now(),
+            sys,
             cpu_util: RollingSeries::new(capacity_secs),
             ram_util: RollingSeries::new(capacity_secs),
             gpu_util: RollingSeries::new(capacity_secs),
             vram_util: RollingSeries::new(capacity_secs),
             temp_series,
-            freq_series, freq_visible, freq_colors,
+            freq_series,
+            freq_visible,
+            freq_colors,
             groups,
             seconds: 0.0,
             sample_period: Duration::from_secs_f64((1.0 / sample_hz).max(0.05)),
             last_tick: Instant::now(),
             display_window_secs: 120.0,
-            link_zoom: true,
-            x_bounds_link: None,
-            temp_y_range: None,
             legend_place: LegendPlacement::Footer,
-            ui_font_size: 14.0, ui_font_color: Color32::WHITE,
-            pending_ui_font_size: 14.0, pending_ui_font_color: Color32::WHITE,
+            ui_font_size: 14.0,
+            ui_font_color: Color32::WHITE,
+            pending_ui_font_size: 14.0,
+            pending_ui_font_color: Color32::WHITE,
             live_font_preview: false,
             #[cfg(feature = "nvidia")]
             nv: nv_opt,
@@ -387,14 +416,15 @@ impl App {
     }
 
     fn sample(&mut self) {
-        // Refresh sysinfo
+        // refresh
         self.sys.refresh_cpu();
         self.sys.refresh_memory();
 
         // CPU / RAM %
         let avg_cpu: f32 = self.sys.cpus().iter().map(|c| c.cpu_usage()).sum::<f32>() / (self.sys.cpus().len().max(1) as f32);
         let cpu_pct = avg_cpu as f64;
-        let total = self.sys.total_memory() as f64; let used = self.sys.used_memory() as f64;
+        let total = self.sys.total_memory() as f64;
+        let used = self.sys.used_memory() as f64;
         let ram_pct = if total>0.0 { (used/total)*100.0 } else { 0.0 };
 
         // timebase
@@ -404,7 +434,7 @@ impl App {
         self.cpu_util.push(self.seconds, cpu_pct);
         self.ram_util.push(self.seconds, ram_pct);
 
-        // GPU util/VRAM/temp + clocks (NVML)
+        // NVIDIA sampling
         #[cfg(feature = "nvidia")]
         {
             if let Some(nv) = &self.nv {
@@ -412,17 +442,26 @@ impl App {
                     self.gpu_util.push(self.seconds, gpu_pct);
                     self.vram_util.push(self.seconds, vram_pct);
                     if let Some(idx) = self.gpu_temp_idx { self.temp_series[idx].push(self.seconds, temp_c); }
-                } else { self.gpu_util.push(self.seconds, f64::NAN); self.vram_util.push(self.seconds, f64::NAN); }
+                } else {
+                    self.gpu_util.push(self.seconds, f64::NAN);
+                    self.vram_util.push(self.seconds, f64::NAN);
+                }
                 if let Some((g, sm, m, v)) = nvgpu::gpu_clocks_mhz(nv) {
                     self.gpu_clk_graphics.push(self.seconds, g);
                     self.gpu_clk_sm.push(self.seconds, sm);
                     self.gpu_clk_mem.push(self.seconds, m);
                     self.gpu_clk_video.push(self.seconds, v);
                 }
-            } else { self.gpu_util.push(self.seconds, f64::NAN); self.vram_util.push(self.seconds, f64::NAN); }
+            } else {
+                self.gpu_util.push(self.seconds, f64::NAN);
+                self.vram_util.push(self.seconds, f64::NAN);
+            }
         }
         #[cfg(not(feature = "nvidia"))]
-        { self.gpu_util.push(self.seconds, f64::NAN); self.vram_util.push(self.seconds, f64::NAN); }
+        {
+            self.gpu_util.push(self.seconds, f64::NAN);
+            self.vram_util.push(self.seconds, f64::NAN);
+        }
 
         // CPU per-core frequencies (kHz)
         for (i, fsens) in FREQ_SENSORS.iter().enumerate() {
@@ -450,6 +489,7 @@ impl eframe::App for App {
         ].into();
         ctx.set_style(style);
 
+        // sampling
         if self.last_tick.elapsed() >= self.sample_period { self.sample(); self.last_tick = Instant::now(); }
         ctx.request_repaint_after(Duration::from_millis(16));
 
@@ -468,59 +508,61 @@ impl eframe::App for App {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.set_min_size(Vec2::new(920.0, 640.0));
+            ui.set_min_size(Vec2::new(980.0, 640.0));
             let (auto_xmin, auto_xmax) = if self.seconds > self.display_window_secs { (self.seconds - self.display_window_secs, self.seconds) } else { (0.0, self.display_window_secs) };
 
-            // Utilization
+            // ============ Utilization ============
             ui.heading("Utilization");
             let util_plot = Plot::new("util").height(220.0).allow_scroll(true).allow_zoom(true).legend(Legend::default().position(Corner::LeftTop));
             util_plot.show(ui, |plot_ui| {
-                let (xmin, xmax) = self.x_bounds_link.unwrap_or((auto_xmin, auto_xmax));
+                let (xmin, xmax) = (auto_xmin, auto_xmax);
                 plot_ui.set_plot_bounds(PlotBounds::from_min_max([xmin, 0.0], [xmax, 100.0]));
-                // draw left-side % ticks in the same color as UI text
+                // left-side labels in UI color
                 let (ymin, ymax) = (0.0, 100.0);
-                let ticks_left = 4; let step_left = (ymax - ymin) / (ticks_left as f64); let mut lv = ymin;
-                while lv <= ymax + 1e-6 { plot_ui.text(Text::new([xmin, lv].into(), format!("{:.0}%", lv)).anchor(Align2::LEFT_CENTER)); lv += step_left; }
+                let ticks = 4; let step = (ymax - ymin) / (ticks as f64); let mut v = ymin;
+                while v <= ymax + 1e-6 { plot_ui.text(Text::new([xmin, v].into(), format!("{:.0}%", v)).anchor(Align2::LEFT_CENTER)); v += step; }
+
                 plot_ui.line(Line::new(self.cpu_util.points_after(xmin)).name("CPU %").color(theme_color("cpu")));
                 plot_ui.line(Line::new(self.gpu_util.points_after(xmin)).name("GPU %").color(theme_color("gpu")));
                 plot_ui.line(Line::new(self.ram_util.points_after(xmin)).name("RAM %").color(theme_color("ramspd")));
                 plot_ui.line(Line::new(self.vram_util.points_after(xmin)).name("VRAM %").color(theme_color("nvme")));
-                // right-side ticks for %
-                let (ymin, ymax) = (0.0, 100.0);
-                let ticks = 4; let step = (ymax - ymin) / (ticks as f64); let mut v = ymin;
-                while v <= ymax + 1e-6 { plot_ui.text(Text::new([xmax, v].into(), format!("{:.0}%", v)).anchor(Align2::RIGHT_CENTER)); v += step; }
+
+                // right-side labels for symmetry
+                let mut v2 = ymin; while v2 <= ymax + 1e-6 { plot_ui.text(Text::new([xmax, v2].into(), format!("{:.0}%", v2)).anchor(Align2::RIGHT_CENTER)); v2 += step; }
             });
 
             ui.separator();
 
-            // Temperatures
+            // ============ Temperatures ============
             ui.heading("Temperatures (°C)");
-            let (xmin, xmax) = self.x_bounds_link.unwrap_or((auto_xmin, auto_xmax));
+            let (xmin, xmax) = (auto_xmin, auto_xmax);
             let temp_plot = Plot::new("temps").height(260.0).allow_scroll(true).allow_zoom(true);
             temp_plot.show(ui, |plot_ui| {
+                // dynamic y
                 let mut mn = f64::INFINITY; let mut mx = f64::NEG_INFINITY;
                 for g in &self.groups { if !g.visible { continue; } for it in &g.items { if !it.visible { continue; } if let Some((a,b)) = self.temp_series[it.idx].min_max_y(xmin, xmax) { if a < mn { mn = a; } if b > mx { mx = b; } } }}
                 if !mn.is_finite() || !mx.is_finite() || (mx - mn).abs() < 1e-6 { mn = 0.0; mx = 120.0; }
                 let pad = ((mx - mn) * 0.1).max(2.0); mn = (mn - pad).max(0.0); mx = (mx + pad).min(130.0);
-                let (ymin, ymax) = (mn, mx);
-                plot_ui.set_plot_bounds(PlotBounds::from_min_max([xmin, ymin], [xmax, ymax]));
+                plot_ui.set_plot_bounds(PlotBounds::from_min_max([xmin, mn], [xmax, mx]));
+
                 for g in &self.groups { if !g.visible { continue; }
                     for it in &g.items { if !it.visible { continue; }
                         let pts = self.temp_series[it.idx].points_after(xmin);
                         plot_ui.line(Line::new(pts).name(format!("{}: {}", g.display, it.name)).color(it.color));
                     }
                 }
-                let ticks = 4; let step = (ymax - ymin) / (ticks as f64); let mut v = ymin;
-                while v <= ymax + 1e-6 { plot_ui.text(Text::new([xmax, v].into(), format!("{:.0}", v)).anchor(Align2::RIGHT_CENTER)); v += step; }
+                let ticks = 4; let step = (mx - mn) / (ticks as f64); let mut v = mn;
+                while v <= mx + 1e-6 { plot_ui.text(Text::new([xmax, v].into(), format!("{:.0}", v)).anchor(Align2::RIGHT_CENTER)); v += step; }
             });
 
             ui.separator();
 
-            // Frequencies (GHz)
+            // ============ Frequencies (GHz) ============
             ui.heading("Frequencies (GHz)");
-            let (xmin, xmax) = self.x_bounds_link.unwrap_or((auto_xmin, auto_xmax));
+            let (xmin, xmax) = (auto_xmin, auto_xmax);
             let freq_plot = Plot::new("freq").height(240.0).allow_scroll(true).allow_zoom(true);
             freq_plot.show(ui, |plot_ui| {
+                // dynamic y across CPU cores + GPU lines
                 let mut mn = f64::INFINITY; let mut mx = f64::NEG_INFINITY;
                 for (i, series) in self.freq_series.iter().enumerate() {
                     if !self.freq_visible.get(i).copied().unwrap_or(false) { continue; }
@@ -530,13 +572,13 @@ impl eframe::App for App {
                 {
                     if self.gpu_freq_graphics_vis { if let Some((a,b)) = self.gpu_clk_graphics.min_max_y(xmin, xmax) { let ag=a/1000.0; let bg=b/1000.0; if ag<mn{mn=ag;} if bg>mx{mx=bg;} } }
                     if self.gpu_freq_sm_vis       { if let Some((a,b)) = self.gpu_clk_sm.min_max_y(xmin, xmax)       { let ag=a/1000.0; let bg=b/1000.0; if ag<mn{mn=ag;} if bg>mx{mx=bg;} } }
-                    if self.gpu_freq_mem_vis      { if let Some((a,b)) = self.gpu_clk_mem.min_max_y(xmin, xmax)      { let ag=a/1000.0; let bg=b/1000.0; if ag<mn{mn=ag;} if bg>mx{mx=bg;} } }
+                    if self.gpu_freq_mem_vis      { if let Some((a,b)) = self.gpu_clk_mem.min_max_y(xmin, xmax)      { let ag=(a/1000.0) * if self.gpu_mem_effective { 2.0 } else { 1.0 }; let bg=(b/1000.0) * if self.gpu_mem_effective { 2.0 } else { 1.0 }; if ag<mn{mn=ag;} if bg>mx{mx=bg;} } }
                     if self.gpu_freq_video_vis    { if let Some((a,b)) = self.gpu_clk_video.min_max_y(xmin, xmax)    { let ag=a/1000.0; let bg=b/1000.0; if ag<mn{mn=ag;} if bg>mx{mx=bg;} } }
                 }
                 if !mn.is_finite() || !mx.is_finite() || (mx - mn).abs() < 1e-6 { mn = 0.1; mx = 10.0; }
                 let pad = ((mx - mn) * 0.08).max(0.05); mn = (mn - pad).max(0.0); mx = (mx + pad).min(12.0);
-                let (ymin, ymax) = (mn, mx);
-                plot_ui.set_plot_bounds(PlotBounds::from_min_max([xmin, ymin], [xmax, ymax]));
+                plot_ui.set_plot_bounds(PlotBounds::from_min_max([xmin, mn], [xmax, mx]));
+
                 for (i, series) in self.freq_series.iter().enumerate() {
                     if !self.freq_visible.get(i).copied().unwrap_or(false) { continue; }
                     let name = format!("CPU Core {}", FREQ_SENSORS.get(i).map(|s| s.core).unwrap_or(i));
@@ -547,25 +589,24 @@ impl eframe::App for App {
                 {
                     if self.gpu_freq_graphics_vis { let pts = self.gpu_clk_graphics.points_after_scaled(xmin, 1000.0); plot_ui.line(Line::new(pts).name("GPU Graphics")); }
                     if self.gpu_freq_sm_vis       { let pts = self.gpu_clk_sm.points_after_scaled(xmin, 1000.0);       plot_ui.line(Line::new(pts).name("GPU SM")); }
-                    if self.gpu_freq_mem_vis { let div = 1000.0 / if self.gpu_mem_effective { 2.0 } else { 1.0 }; let pts = self.gpu_clk_mem.points_after_scaled(xmin, div); let label = if self.gpu_mem_effective { "GPU Memory (effective)" } else { "GPU Memory" }; plot_ui.line(Line::new(pts).name(label)); }
+                    if self.gpu_freq_mem_vis      { let div = 1000.0 / if self.gpu_mem_effective { 2.0 } else { 1.0 }; let pts = self.gpu_clk_mem.points_after_scaled(xmin, div); let label = if self.gpu_mem_effective { "GPU Memory (effective)" } else { "GPU Memory" }; plot_ui.line(Line::new(pts).name(label)); }
                     if self.gpu_freq_video_vis    { let pts = self.gpu_clk_video.points_after_scaled(xmin, 1000.0);    plot_ui.line(Line::new(pts).name("GPU Video")); }
                 }
-                let ticks = 4; let step = (ymax - ymin) / (ticks as f64); let mut v = ymin;
-                while v <= ymax + 1e-6 { plot_ui.text(Text::new([xmax, v].into(), format!("{:.2} GHz", v)).anchor(Align2::RIGHT_CENTER)); v += step; }
+                let ticks = 4; let step = (mx - mn) / (ticks as f64); let mut v = mn;
+                while v <= mx + 1e-6 { plot_ui.text(Text::new([xmax, v].into(), format!("{:.2} GHz", v)).anchor(Align2::RIGHT_CENTER)); v += step; }
             });
 
-            // Legends outside
+            // ============ Legends outside ============
             match self.legend_place { LegendPlacement::Footer => self.footer_legend(ui), LegendPlacement::Side => self.side_legend(ui) }
 
             ui.separator();
 
-            // Settings + Sensor visibility
+            // ============ Settings & Sensors ============
             egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
                 ui.heading("Display");
                 ui.horizontal(|ui| {
                     ui.label("Window (seconds) before scroll):");
                     ui.add(egui::Slider::new(&mut self.display_window_secs, 30.0..=900.0));
-                    ui.checkbox(&mut self.link_zoom, "Link zoom between plots");
                     egui::ComboBox::from_label("Legend placement")
                         .selected_text(match self.legend_place { LegendPlacement::Footer => "Footer", LegendPlacement::Side => "Side" })
                         .show_ui(ui, |ui| {
@@ -588,22 +629,28 @@ impl eframe::App for App {
 
                 ui.heading("Sensors");
                 let cols = 2;
-                egui::Grid::new("sensor_grid").num_columns(cols).spacing([18.0, 8.0]).show(ui, |ui| {
+                egui::Grid::new("sensor_grid").num_columns(cols).striped(true).min_col_width(400.0).spacing([18.0, 8.0]).show(ui, |ui| {
                     for g in &mut self.groups {
                         if g.display.starts_with("CPU") {
                             egui::CollapsingHeader::new("CPU").id_source("grp_cpu").default_open(false).show(ui, |ui| {
-                                let avail = ui.available_width();
-                                let left = (avail * 0.80).max(420.0).min(avail - 140.0);  //where you edit column width
-                                ui.columns(2, |cols| {
-                                    cols[0].set_width(left);
-
-                                    cols[0].vertical(|ui| {
+                                ui.horizontal(|ui| {
+                                    let avail = ui.available_width();
+                                    let min_right = 250.0;
+                                    let max_left  = (avail - min_right).max(0.0);
+                                    let target    = avail * 0.9;
+                                    let left_px   = target.min(max_left);
+                                    let right_px  = (avail - left_px).max(0.0);
+                                    let layout = egui::Layout::top_down(egui::Align::LEFT);
+                                    ui.allocate_ui_with_layout(egui::vec2(left_px, 0.0), layout, |ui| {
                                         ui.label(RichText::new("Core temperatures").strong());
                                         for it in &mut g.items { ui.checkbox(&mut it.visible, &it.name); }
                                     });
-                                    cols[1].vertical(|ui| {
+                                    ui.allocate_ui_with_layout(egui::vec2(right_px, 0.0), layout, |ui| {
                                         ui.label(RichText::new("Core frequencies").strong());
-                                        ui.horizontal(|ui| { if ui.button("All").clicked() { for v in &mut self.freq_visible { *v = true; } } if ui.button("None").clicked() { for v in &mut self.freq_visible { *v = false; } } });
+                                        ui.horizontal(|ui| {
+                                            if ui.button("All").clicked()  { for v in &mut self.freq_visible { *v = true; } }
+                                            if ui.button("None").clicked() { for v in &mut self.freq_visible { *v = false; } }
+                                        });
                                         for (i, fs) in FREQ_SENSORS.iter().enumerate() {
                                             let mut vis = self.freq_visible[i];
                                             let label = format!("CPU Core {}", fs.core);
@@ -615,24 +662,27 @@ impl eframe::App for App {
                             });
                         } else if g.display.starts_with("GPU") {
                             egui::CollapsingHeader::new("GPU").id_source("grp_gpu").default_open(false).show(ui, |ui| {
-                                let avail = ui.available_width();
-                                let left = (avail * 0.65).max(340.0).min(avail - 140.0);
-                                ui.columns(2, |cols| {
-                                    cols[0].set_width(left);
-                                    
-                                    cols[0].vertical(|ui| {
+                                ui.horizontal(|ui| {
+                                    let avail = ui.available_width();
+                                    let min_right = 250.0;
+                                    let max_left  = (avail - min_right).max(0.0);
+                                    let target    = avail * 0.9;
+                                    let left_px   = target.min(max_left);
+                                    let right_px  = (avail - left_px).max(0.0);
+                                    let layout = egui::Layout::top_down(egui::Align::LEFT);
+                                    ui.allocate_ui_with_layout(egui::vec2(left_px, 0.0), layout, |ui| {
                                         ui.label(RichText::new("Temperatures").strong());
                                         for it in &mut g.items { ui.checkbox(&mut it.visible, &it.name); }
                                     });
-                                    cols[1].vertical(|ui| {
+                                    ui.allocate_ui_with_layout(egui::vec2(right_px, 0.0), layout, |ui| {
                                         ui.label(RichText::new("Frequencies").strong());
                                         #[cfg(feature = "nvidia")]
                                         {
                                             ui.checkbox(&mut self.gpu_freq_graphics_vis, "GPU Graphics");
-                                            ui.checkbox(&mut self.gpu_freq_sm_vis, "GPU SM");
-                                            ui.checkbox(&mut self.gpu_mem_effective, "Show memory as effective (x2)");
-                                            ui.checkbox(&mut self.gpu_freq_mem_vis, "GPU Memory");
-                                            ui.checkbox(&mut self.gpu_freq_video_vis, "GPU Video");
+                                            ui.checkbox(&mut self.gpu_freq_sm_vis,       "GPU SM");
+                                            ui.checkbox(&mut self.gpu_mem_effective,     "Show memory as effective (x2)");
+                                            ui.checkbox(&mut self.gpu_freq_mem_vis,      "GPU Memory");
+                                            ui.checkbox(&mut self.gpu_freq_video_vis,    "GPU Video");
                                         }
                                     });
                                 });
