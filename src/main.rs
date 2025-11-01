@@ -495,7 +495,7 @@ impl eframe::App for App {
 
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.heading("SIA - System Information Analyzer - by David Crawley dc@ubiquityrobotics.com");
+                ui.heading("SIA - System Information Analyzer - © David Crawley 2025");
                 ui.separator();
                 ui.label(format!("Uptime: {}s", self.start.elapsed().as_secs()));
                 ui.separator();
@@ -508,7 +508,7 @@ impl eframe::App for App {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.set_min_size(Vec2::new(980.0, 640.0));
+            ui.set_min_size(Vec2::new(1200.0, 880.0));
             let (auto_xmin, auto_xmax) = if self.seconds > self.display_window_secs { (self.seconds - self.display_window_secs, self.seconds) } else { (0.0, self.display_window_secs) };
 
             // ============ Utilization ============
@@ -629,19 +629,20 @@ impl eframe::App for App {
 
                 ui.heading("Sensors");
                 let cols = 2;
-                egui::Grid::new("sensor_grid").num_columns(cols).striped(true).min_col_width(400.0).spacing([18.0, 8.0]).show(ui, |ui| {
+                egui::Grid::new("sensor_grid").num_columns(cols).striped(true).min_col_width(500.0).spacing([18.0, 8.0]).show(ui, |ui| {
                     for g in &mut self.groups {
                         if g.display.starts_with("CPU") {
                             egui::CollapsingHeader::new("CPU").id_source("grp_cpu").default_open(false).show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    //let avail = ui.available_width();
-                                    //let min_right = 250.0;
-                                    //let max_left  = (avail - min_right).max(0.0);
-                                    //let target    = avail * 0.9;
 
-
-                                    let left_px   = 150.0; //target.min(max_left);
-                                    let right_px  = 250.0;  //(avail - left_px).max(0.0);
+                                ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                                    let avail    = ui.available_width();
+                                    let spacing  = ui.spacing().item_spacing.x;
+                                    let inner    = (avail - spacing).max(0.0);
+                                    let min_right= 250.0;                // keep some room for the freqs column
+                                    let max_left = (inner - min_right).max(0.0);
+                                    let target   = inner * 0.7;         // make left a bit wider by default
+                                    let left_px  = target.min(max_left);
+                                    let right_px = (inner - left_px).max(0.0);
                                     let layout = egui::Layout::top_down(egui::Align::LEFT);
                                     ui.allocate_ui_with_layout(egui::vec2(left_px, 0.0), layout, |ui| {
                                         ui.label(RichText::new("Core temperatures").strong());
@@ -664,13 +665,16 @@ impl eframe::App for App {
                             });
                         } else if g.display.starts_with("GPU") {
                             egui::CollapsingHeader::new("GPU").id_source("grp_gpu").default_open(false).show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    //let avail = ui.available_width();
-                                    //let min_right = 250.0;
-                                    //let max_left  = (avail - min_right).max(0.0);
-                                    //let target    = avail * 0.9;
-                                    let left_px   = 150.0; //target.min(max_left);
-                                    let right_px  = 250.0; //(avail - left_px).max(0.0);
+                               ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+
+                                    let avail    = ui.available_width();
+                                    let spacing  = ui.spacing().item_spacing.x;
+                                    let inner    = (avail - spacing).max(0.0);
+                                    let min_right= 250.0;
+                                    let max_left = (inner - min_right).max(0.0);
+                                    let target   = inner * 0.7;         // a touch wider for temps
+                                    let left_px  = target.min(max_left);
+                                    let right_px = (inner - left_px).max(0.0);
                                     let layout = egui::Layout::top_down(egui::Align::LEFT);
                                     ui.allocate_ui_with_layout(egui::vec2(left_px, 0.0), layout, |ui| {
                                         ui.label(RichText::new("Temperatures").strong());
@@ -733,9 +737,9 @@ impl App {
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1000.0, 700.0])
-            .with_min_inner_size([820.0, 560.0])
-            .with_title("SIA - System Information Analyzer - By David Crawley - dc@ubiquityrobotics.com"),
+            .with_inner_size([1230.0, 1130.0])
+            .with_min_inner_size([950.0, 700.0])
+            .with_title("SIA - System Information Analyzer - © David Crawley 2025"),
         ..Default::default()
     };
     eframe::run_native("SIA - System Information Analyzer", options, Box::new(|_cc| Ok(Box::new(App::new(5 * 60, 1.0)))) )
