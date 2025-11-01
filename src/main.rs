@@ -68,7 +68,25 @@ fn theme_color(key: &str) -> Color32 {
     }
 }
 
-// small utility palette (for per-core if needed)
+// Generate per-group palettes (distinct shades)
+fn group_palette(key: &str, n: usize) -> Vec<Color32> {
+    let base = theme_color(key);
+    let mut out = Vec::with_capacity(n);
+    // simple variation by scaling toward white/black alternately
+    for i in 0..n {
+        let t = 0.15 + (i as f32 % 6.0) * 0.12; // 6-step cycle
+        let (r, g, b, a) = (base.r() as f32, base.g() as f32, base.b() as f32, base.a());
+        let r = (r + (255.0 - r) * t).min(255.0) as u8;
+        let g = (g + (255.0 - g) * t).min(255.0) as u8;
+        let b = (b + (255.0 - b) * t).min(255.0) as u8;
+        out.push(Color32::from_rgba_unmultiplied(r, g, b, a));
+    }
+    if out.is_empty() { out.push(base); }
+    out
+}
+
+// small utility palette kept for compatibility (unused for now)
+#[allow(dead_code)]
 fn palette() -> Vec<Color32> {
     vec![
         Color32::from_rgb(220, 30, 30), // red
@@ -166,6 +184,17 @@ fn discover_hwmon_temps() -> Vec<TempSensor> {
 
 fn read_temp_c(path: &PathBuf) -> Option<f64> { let mut s=String::new(); fs::File::open(path).ok()?.read_to_string(&mut s).ok()?; let v: f64 = s.trim().parse().ok()?; Some(if v>1000.0 { v/1000.0 } else { v }) }
 
+// Try to extract an nvme device hint (nvme0, nvme1, nvme0n1) from a hwmon temp path
+fn nvme_hint_from_path(path: &PathBuf) -> Option<String> {
+    for anc in path.ancestors() {
+        for comp in anc.iter() {
+            let s = comp.to_string_lossy();
+            if s.starts_with("nvme") { return Some(s.to_string()); }
+        }
+    }
+    None
+}
+
 // ===================== Grouping, naming & taxonomy =====================
 #[derive(Clone, Debug)]
 struct SensorItem { name: String, idx: usize, visible: bool, color: Color32 }
@@ -186,14 +215,11 @@ fn classify(raw: &str) -> (String, String, f64, f64) {
     (raw.to_string(), raw.to_string(), 90.0, 100.0)
 }
 
-fn humanize_item_label(group_key: &str, raw_label: &str) -> String {
+fn humanize_item_label(group_key: &str, raw_label: &str, idx: usize, path: &PathBuf) -> String {
     let l = raw_label.trim();
-    if l.is_empty() { return l.to_string(); }
     let lo = l.to_lowercase();
     match group_key {
-        "wifi" => {
-            if lo.contains("iwlwifi") { "Wi‑Fi".to_string() } else { "Wi‑Fi".to_string() }
-        }
+        "wifi" => "Wi‑Fi".to_string(),
         "eth" => {
             if lo.contains("r8169") { "Ethernet (r8169)".to_string() }
             else if lo.contains("igc") { "Ethernet (igc)".to_string() }
@@ -203,10 +229,13 @@ fn humanize_item_label(group_key: &str, raw_label: &str) -> String {
         "ram" => {
             if lo.starts_with("spd") { "SPD Hub".to_string() } else { "Memory".to_string() }
         }
-        "ssd" => "SSD".to_string(),
+        "ssd" => {
+            if let Some(hint) = nvme_hint_from_path(path) { format!("SSD (NVMe {})", hint) }
+            else { format!("SSD (NVMe #{})", idx + 1) }
+        }
         "gpu" => {
-            if lo.contains("edge") { "Edge".to_string() }
-            else if lo.contains("hotspot") { "Hotspot".to_string() }
+            if lo.contains("edge") { "GPU Edge".to_string() }
+            else if lo.contains("hotspot") { "GPU Hotspot".to_string() }
             else { "GPU".to_string() }
         }
         "cpu" => l.to_string(),
@@ -229,9 +258,18 @@ fn build_groups() -> Vec<SensorGroup> {
             hot,
             show_thresholds: false,
         });
-        let nice = humanize_item_label(&key, &ts.raw_label);
-        let color = theme_color(&key);
-        entry.items.push(SensorItem { name: nice, idx: i, visible: true, color });
+        let nice = humanize_item_label(&key, &ts.raw_label, entry.items.len(), &ts.path);
+        let visible = if key == "cpu" {
+            let lo = nice.to_lowercase();
+            lo.contains("package") || lo.contains("composite")
+        } else { true };
+        entry.items.push(SensorItem { name: nice, idx: i, visible, color: Color32::WHITE });
+    }
+
+    // assign distinct colors per item within each group
+    for g in map.values_mut() {
+        let pal = group_palette(&g.key, g.items.len());
+        for (i, it) in g.items.iter_mut().enumerate() { it.color = pal[i % pal.len()]; }
     }
 
     // sort items within groups
@@ -268,6 +306,15 @@ fn build_groups() -> Vec<SensorGroup> {
     let mut v: Vec<_> = map.into_values().collect();
     fn rank(key: &str) -> i32 { match key { "cpu"=>0, "gpu"=>1, "ssd"=>2, "ram"=>3, "wifi"=>4, "eth"=>5, _=>6 } }
     v.sort_by_key(|g| rank(&g.key));
+
+    // Ensure a GPU rollout header exists even if no hwmon GPU temps are detected
+    #[cfg(feature = "nvidia")]
+    {
+        if !v.iter().any(|g| g.key == "gpu") {
+            v.insert(1, SensorGroup { key: "gpu".into(), display: "GPU".into(), items: vec![], visible: true, warn: 85.0, hot: 95.0, show_thresholds: false });
+        }
+    }
+
     v
 }
 
@@ -290,6 +337,7 @@ struct App {
     temp_series: Vec<RollingSeries>,
     freq_series: Vec<RollingSeries>,       // CPU core kHz
     freq_visible: Vec<bool>,
+    freq_colors: Vec<Color32>,
 
     // sensor groups
     groups: Vec<SensorGroup>,
@@ -346,14 +394,18 @@ impl App {
         let groups = build_groups();
         let temp_series = HWMON_SENSORS.iter().map(|_| RollingSeries::new(capacity_secs)).collect::<Vec<_>>();
         let freq_series = FREQ_SENSORS.iter().map(|_| RollingSeries::new(capacity_secs)).collect::<Vec<_>>();
-        let freq_visible = FREQ_SENSORS.iter().map(|_| true).collect::<Vec<_>>();
+        let mut freq_visible = FREQ_SENSORS.iter().map(|_| true).collect::<Vec<_>>();
+        // leave all core freqs visible by default; we can change if desired
+        let freq_colors = group_palette("cpu", FREQ_SENSORS.len());
 
-        // map GPU temp into temp_series
         #[cfg(feature = "nvidia")]
         let (nv, gpu_temp_idx, gpu_clk_graphics, gpu_clk_sm, gpu_clk_mem, gpu_clk_video) = {
             let nv = nvgpu::NvState::try_new();
             let mut idx: Option<usize> = None;
-            for (i, t) in HWMON_SENSORS.iter().enumerate() { let r = t.raw_name.to_lowercase(); if r.contains("nvidia") || r.contains("gpu") { idx = Some(i); break; } }
+            for (i, t) in HWMON_SENSORS.iter().enumerate() {
+                let r = t.raw_name.to_lowercase();
+                if r.contains("nvidia") || r.contains("gpu") { idx = Some(i); break; }
+            }
             (
                 nv,
                 idx,
@@ -374,6 +426,7 @@ impl App {
             temp_series,
             freq_series,
             freq_visible,
+            freq_colors,
             groups,
             seconds: 0.0,
             sample_period: Duration::from_secs_f64(1.0 / sample_hz),
@@ -417,20 +470,15 @@ impl App {
         self.sys.refresh_cpu();
         self.sys.refresh_memory();
 
-        // CPU & RAM util
         let cpu_pct: f64 = self.sys.cpus().iter().map(|c| c.cpu_usage() as f64).sum::<f64>() / (self.sys.cpus().len() as f64);
         let total_mem = self.sys.total_memory() as f64;
         let used_mem = (self.sys.used_memory() as f64).min(total_mem);
         let ram_pct = if total_mem > 0.0 { (used_mem / total_mem) * 100.0 } else { 0.0 };
 
-        // timebase
         self.seconds += self.sample_period.as_secs_f64();
-
-        // push util
         self.cpu_util.push(self.seconds, cpu_pct);
         self.ram_util.push(self.seconds, ram_pct);
 
-        // NVIDIA sampling
         #[cfg(feature = "nvidia")]
         {
             if let Some(nv) = &self.nv {
@@ -459,21 +507,59 @@ impl App {
             self.vram_util.push(self.seconds, f64::NAN);
         }
 
-        // CPU per-core frequencies (kHz)
         for (i, fsens) in FREQ_SENSORS.iter().enumerate() {
             if let Some(khz) = read_freq_khz(&fsens.path) { self.freq_series[i].push(self.seconds, khz); }
         }
-        // Temperatures
         for (i, ts) in HWMON_SENSORS.iter().enumerate() {
             if let Some(t) = read_temp_c(&ts.path) { self.temp_series[i].push(self.seconds, t); }
         }
     }
+
+    fn footer_legend(&self, ui: &mut egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("Legend:").strong());
+            for g in &self.groups {
+                if !g.visible { continue; }
+                for it in &g.items {
+                    if !it.visible { continue; }
+                    let mut text = it.name.clone();
+                    let hot  = self.temp_series[it.idx].last_y().map(|y| y >= g.hot).unwrap_or(false);
+                    let warn = self.temp_series[it.idx].last_y().map(|y| y >= g.warn).unwrap_or(false);
+                    if hot { text.push_str(" 🔥"); } else if warn { text.push_str(" 🥵"); }
+                    ui.horizontal(|ui| {
+                        ui.colored_label(it.color, "●");
+                        ui.label(text);
+                    });
+                }
+            }
+        });
+    }
+
+    fn side_legend(&self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.label(RichText::new("Legend").strong());
+                for g in &self.groups {
+                    if !g.visible { continue; }
+                    for it in &g.items {
+                        if !it.visible { continue; }
+                        let mut text = it.name.clone();
+                        let hot  = self.temp_series[it.idx].last_y().map(|y| y >= g.hot).unwrap_or(false);
+                        let warn = self.temp_series[it.idx].last_y().map(|y| y >= g.warn).unwrap_or(false);
+                        if hot { text.push_str(" 🔥"); } else if warn { text.push_str(" 🥵"); }
+                        ui.horizontal(|ui| {
+                            ui.colored_label(it.color, "●");
+                            ui.label(text);
+                        });
+                    }
+                }
+            });
+        });
+    }
 }
 
-// ===================== UI =====================
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Typography
         let mut style: egui::Style = (*ctx.style()).clone();
         style.visuals.override_text_color = Some(self.ui_font_color);
         style.text_styles = [
@@ -485,7 +571,6 @@ impl eframe::App for App {
         ].into();
         ctx.set_style(style);
 
-        // sampling
         if self.last_tick.elapsed() >= self.sample_period { self.sample(); self.last_tick = Instant::now(); }
         ctx.request_repaint_after(Duration::from_millis(16));
 
@@ -507,7 +592,7 @@ impl eframe::App for App {
             ui.set_min_size(Vec2::new(1200.0, 880.0));
             let (auto_xmin, auto_xmax) = if self.seconds > self.display_window_secs { (self.seconds - self.display_window_secs, self.seconds) } else { (0.0, self.display_window_secs) };
 
-            // ============ Utilization ============
+            // Utilization
             ui.horizontal(|ui| {
                 ui.heading("Utilization");
                 let label = if self.show_util { "Hide" } else { "Show" };
@@ -518,7 +603,6 @@ impl eframe::App for App {
                 util_plot.show(ui, |plot_ui| {
                     let (xmin, xmax) = (auto_xmin, auto_xmax);
                     plot_ui.set_plot_bounds(PlotBounds::from_min_max([xmin, 0.0], [xmax, 100.0]));
-                    // left-side labels in UI color
                     let (ymin, ymax) = (0.0, 100.0);
                     let ticks = 4; let step = (ymax - ymin) / (ticks as f64); let mut v = ymin;
                     while v <= ymax + 1e-6 { plot_ui.text(Text::new([xmin, v].into(), format!("{:.0}%", v)).anchor(Align2::LEFT_CENTER)); v += step; }
@@ -526,15 +610,14 @@ impl eframe::App for App {
                     plot_ui.line(Line::new(self.cpu_util.points_after(xmin)).name("CPU %").color(theme_color("cpu")));
                     plot_ui.line(Line::new(self.gpu_util.points_after(xmin)).name("GPU %").color(theme_color("gpu")));
                     plot_ui.line(Line::new(self.ram_util.points_after(xmin)).name("RAM %").color(theme_color("ram")));
-                    plot_ui.line(Line::new(self.vram_util.points_after(xmin)).name("VRAM %").color(theme_color("vram")));
+                    plot_ui.line(Line::new(self.vram_util.points_after(xmin)).name("GPU Memory %").color(theme_color("vram")));
 
-                    // right-side labels for symmetry
                     let mut v2 = ymin; while v2 <= ymax + 1e-6 { plot_ui.text(Text::new([xmax, v2].into(), format!("{:.0}%", v2)).anchor(Align2::RIGHT_CENTER)); v2 += step; }
                 });
                 ui.separator();
             }
 
-            // ============ Temperatures ============
+            // Temperatures
             ui.horizontal(|ui| {
                 ui.heading("Temperatures (°C)");
                 let label = if self.show_temps { "Hide" } else { "Show" };
@@ -544,7 +627,6 @@ impl eframe::App for App {
                 let (xmin, xmax) = (auto_xmin, auto_xmax);
                 let temp_plot = Plot::new("temps").height(260.0).allow_scroll(true).allow_zoom(true);
                 temp_plot.show(ui, |plot_ui| {
-                    // dynamic y
                     let mut mn = f64::INFINITY; let mut mx = f64::NEG_INFINITY;
                     for g in &self.groups { if !g.visible { continue; } for it in &g.items { if !it.visible { continue; } if let Some((a,b)) = self.temp_series[it.idx].min_max_y(xmin, xmax) { if a < mn { mn = a; } if b > mx { mx = b; } } }}
                     if !mn.is_finite() || !mx.is_finite() || (mx - mn).abs() < 1e-6 { mn = 0.0; mx = 120.0; }
@@ -563,7 +645,7 @@ impl eframe::App for App {
                 ui.separator();
             }
 
-            // ============ Frequencies (GHz) ============
+            // Frequencies
             ui.horizontal(|ui| {
                 ui.heading("Frequencies (GHz)");
                 let label = if self.show_freq { "Hide" } else { "Show" };
@@ -573,7 +655,6 @@ impl eframe::App for App {
                 let (xmin, xmax) = (auto_xmin, auto_xmax);
                 let freq_plot = Plot::new("freq").height(240.0).allow_scroll(true).allow_zoom(true);
                 freq_plot.show(ui, |plot_ui| {
-                    // dynamic y across CPU cores + GPU lines
                     let mut mn = f64::INFINITY; let mut mx = f64::NEG_INFINITY;
                     for (i, series) in self.freq_series.iter().enumerate() {
                         if !self.freq_visible.get(i).copied().unwrap_or(false) { continue; }
@@ -594,7 +675,7 @@ impl eframe::App for App {
                         if !self.freq_visible.get(i).copied().unwrap_or(false) { continue; }
                         let name = format!("CPU Core {}", FREQ_SENSORS.get(i).map(|s| s.core).unwrap_or(i));
                         let pts = series.points_after_scaled(xmin, 1_000_000.0);
-                        plot_ui.line(Line::new(pts).name(name).color(theme_color("cpu"))); // consistent CPU color
+                        plot_ui.line(Line::new(pts).name(name).color(self.freq_colors[i % self.freq_colors.len()]));
                     }
                     #[cfg(feature = "nvidia")]
                     {
@@ -608,16 +689,13 @@ impl eframe::App for App {
                 });
             }
 
-            // ============ Legends outside ============
             match self.legend_place { LegendPlacement::Footer => self.footer_legend(ui), LegendPlacement::Side => self.side_legend(ui) }
-
             ui.separator();
 
-            // ============ Settings & Sensors ============
             egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
                 ui.heading("Display");
                 ui.horizontal(|ui| {
-                    ui.label("Window (seconds) before scroll):");
+                    ui.label("Window length (s):");
                     ui.add(egui::Slider::new(&mut self.display_window_secs, 30.0..=900.0));
                     egui::ComboBox::from_label("Legend placement")
                         .selected_text(match self.legend_place { LegendPlacement::Footer => "Footer", LegendPlacement::Side => "Side" })
@@ -645,14 +723,13 @@ impl eframe::App for App {
                     for g in &mut self.groups {
                         if g.display.starts_with("CPU") {
                             egui::CollapsingHeader::new("CPU").id_source("grp_cpu").default_open(false).show(ui, |ui| {
-
                                 ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
                                     let avail    = ui.available_width();
                                     let spacing  = ui.spacing().item_spacing.x;
                                     let inner    = (avail - spacing).max(0.0);
-                                    let min_right= 250.0;                // keep some room for the freqs column
+                                    let min_right= 250.0;                
                                     let max_left = (inner - min_right).max(0.0);
-                                    let target   = inner * 0.7;         // make left a bit wider by default
+                                    let target   = inner * 0.7;         
                                     let left_px  = target.min(max_left);
                                     let right_px = (inner - left_px).max(0.0);
                                     let layout = egui::Layout::top_down(egui::Align::LEFT);
@@ -677,14 +754,13 @@ impl eframe::App for App {
                             });
                         } else if g.display.starts_with("GPU") {
                             egui::CollapsingHeader::new("GPU").id_source("grp_gpu").default_open(false).show(ui, |ui| {
-                               ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
-
+                                ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
                                     let avail    = ui.available_width();
                                     let spacing  = ui.spacing().item_spacing.x;
                                     let inner    = (avail - spacing).max(0.0);
                                     let min_right= 250.0;
                                     let max_left = (inner - min_right).max(0.0);
-                                    let target   = inner * 0.7;         // a touch wider for temps
+                                    let target   = inner * 0.7;         
                                     let left_px  = target.min(max_left);
                                     let right_px = (inner - left_px).max(0.0);
                                     let layout = egui::Layout::top_down(egui::Align::LEFT);
@@ -716,34 +792,6 @@ impl eframe::App for App {
     }
 }
 
-impl App {
-    fn footer_legend(&self, ui: &mut egui::Ui) {
-        ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("Legend:").strong());
-            for g in &self.groups { if !g.visible { continue; } for it in &g.items { if !it.visible { continue; }
-                let mut text = it.name.clone();
-                let hot = self.temp_series[it.idx].last_y().map(|y| y >= g.hot).unwrap_or(false);
-                let warn = self.temp_series[it.idx].last_y().map(|y| y >= g.warn).unwrap_or(false);
-                if hot { text.push_str(" 🔥"); } else if warn { text.push_str(" 🥵"); }
-                ui.horizontal(|ui| { ui.colored_label(it.color, "●"); ui.label(text); });
-            }}
-        });
-    }
-    fn side_legend(&self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.vertical(|ui| {
-                ui.label(RichText::new("Legend").strong());
-                for g in &self.groups { if !g.visible { continue; } for it in &g.items { if !it.visible { continue; }
-                    let mut text = it.name.clone();
-                    let hot = self.temp_series[it.idx].last_y().map(|y| y >= g.hot).unwrap_or(false);
-                    let warn = self.temp_series[it.idx].last_y().map(|y| y >= g.warn).unwrap_or(false);
-                    if hot { text.push_str(" 🔥"); } else if warn { text.push_str(" 🥵"); }
-                    ui.horizontal(|ui| { ui.colored_label(it.color, "●"); ui.label(text); });
-                }}
-            });
-        });
-    }
-}
 
 // ===================== Entry =====================
 fn main() -> eframe::Result<()> {
@@ -754,5 +802,9 @@ fn main() -> eframe::Result<()> {
             .with_title("SIA - System Information Analyzer - © David Crawley 2025"),
         ..Default::default()
     };
-    eframe::run_native("SIA - System Information Analyzer", options, Box::new(|_cc| Ok(Box::new(App::new(5 * 60, 1.0)))) )
+    eframe::run_native(
+        "SIA - System Information Analyzer",
+        options,
+        Box::new(|_cc| Ok(Box::new(App::new(5 * 60, 1.0))))
+    )
 }
