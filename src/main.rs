@@ -634,12 +634,14 @@ impl eframe::App for App {
                         if g.display.starts_with("CPU") {
                             egui::CollapsingHeader::new("CPU").id_source("grp_cpu").default_open(false).show(ui, |ui| {
                                 ui.horizontal(|ui| {
-                                    let avail = ui.available_width();
-                                    let min_right = 250.0;
-                                    let max_left  = (avail - min_right).max(0.0);
-                                    let target    = avail * 0.9;
-                                    let left_px   = target.min(max_left);
-                                    let right_px  = (avail - left_px).max(0.0);
+                                    //let avail = ui.available_width();
+                                    //let min_right = 250.0;
+                                    //let max_left  = (avail - min_right).max(0.0);
+                                    //let target    = avail * 0.9;
+
+
+                                    let left_px   = 150.0; //target.min(max_left);
+                                    let right_px  = 250.0;  //(avail - left_px).max(0.0);
                                     let layout = egui::Layout::top_down(egui::Align::LEFT);
                                     ui.allocate_ui_with_layout(egui::vec2(left_px, 0.0), layout, |ui| {
                                         ui.label(RichText::new("Core temperatures").strong());
@@ -663,12 +665,12 @@ impl eframe::App for App {
                         } else if g.display.starts_with("GPU") {
                             egui::CollapsingHeader::new("GPU").id_source("grp_gpu").default_open(false).show(ui, |ui| {
                                 ui.horizontal(|ui| {
-                                    let avail = ui.available_width();
-                                    let min_right = 250.0;
-                                    let max_left  = (avail - min_right).max(0.0);
-                                    let target    = avail * 0.9;
-                                    let left_px   = target.min(max_left);
-                                    let right_px  = (avail - left_px).max(0.0);
+                                    //let avail = ui.available_width();
+                                    //let min_right = 250.0;
+                                    //let max_left  = (avail - min_right).max(0.0);
+                                    //let target    = avail * 0.9;
+                                    let left_px   = 150.0; //target.min(max_left);
+                                    let right_px  = 250.0; //(avail - left_px).max(0.0);
                                     let layout = egui::Layout::top_down(egui::Align::LEFT);
                                     ui.allocate_ui_with_layout(egui::vec2(left_px, 0.0), layout, |ui| {
                                         ui.label(RichText::new("Temperatures").strong());
