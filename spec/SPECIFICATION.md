@@ -14,15 +14,45 @@
 | Primary platform           | Linux; Debian/Ubuntu packaging retained                                                                                                                                                                                                  |
 | Primary accelerator target | NVIDIA GPU on the primary Intel-CPU/NVIDIA-GPU development machine. AMD/Intel GPU providers may be implemented capability-first but remain hardware-unverified until tested on real hardware.                                            |
 | Primary consumer           | General-purpose local workloads; IRIS is the first concrete profiling customer                                                                                                                                                           |
-| Status                     | Final committee reviewed. Human-readable three-word PAKE pairing, encrypted off-target observer, test-ownership split and hardware-verification boundaries have converged; implementation parameters remain gated by Phase 0 ADRs/tests. |
+| Status                     | Final committee and purpose/objectives adversarial review complete. The product boundary, three-word PAKE pairing, encrypted off-target observer, test-ownership split and hardware-verification boundaries have converged; implementation parameters remain gated by Phase 0 ADRs/tests. |
+
+# Purpose and objective hierarchy
+
+## North Star
+
+> **Enable engineers to quickly determine whether a local compute workload is constrained by bottlenecks or leaving relevant system resources underutilized.**
+
+## Objectives
+
+### O1 - Clarity, simplicity and focus
+
+Make the North Star determination quick through clear default views, consistent presentation and progressive disclosure. Include metrics, controls or architectural complexity only when they materially improve that determination; remain a general-purpose local tool rather than an IRIS-specific product.
+
+### O2 - Whole-system correlation
+
+Align relevant system, device, process and application-stage information in a common time context so the engineer can see relationships rather than isolated utilization figures.
+
+### O3 - Detection, not root-cause analysis
+
+Provide the correlated evidence needed for the engineer to determine whether and when a bottleneck or material underutilization appears to be present and identify the broad resource class involved. Provide enough information to select the appropriate specialist tool; automatic classification is not required, and exact root-cause analysis and correction remain the role of specialist tools.
+
+### O4 - Fit-for-purpose and honest evidence
+
+Collect and preserve evidence reliable enough to support the determination at the resolution justified by its sources, including usable session evidence after ordinary capture failures. Make capabilities, material gaps, ambiguity, data loss and measurement limitations visible. Never claim more than the measurements support, and do not pursue precision, completeness or sampling rates that are not reasonably likely to improve detection or guide the next investigation step.
+
+### O5 - Low-impact, safe observation
+
+Keep collection, recording and live-observation overhead low, measured and bounded. Collection and observation remain read-only and non-interfering: SIA failure, backlog, malformed input or observer activity does not block, control, alter or terminate the target workload. Protect live telemetry against unauthorized access or modification in proportion to the stated local-LAN threat model.
 
 # 1. Executive summary
+
+**Supports:** O1, O2, O3, O4, O5
 
 SIA is currently a compact Rust/egui real-time system monitor that shows CPU, RAM, GPU and VRAM utilization, temperatures and CPU/GPU clocks. The repository is deliberately small: the current implementation is essentially one src/main.rs, with Linux hwmon/cpufreq collection, sysinfo for CPU/RAM, and optional NVIDIA NVML support. The README already asks for lower overhead, headless operation, CSV recording and application-code triggering. This specification turns those wishes into a coherent profiler architecture without turning SIA into a replacement for Nsight, perf, VTune or a distributed observability platform.
 
 The central architectural change is separation of collection, recording and presentation. A headless collector becomes the authoritative measurement path; the GUI becomes one consumer of live or recorded sessions. This is particularly important for GPU profiling because the current egui/eframe build uses wgpu and requests a repaint every 16 ms even though samples are taken at 1 Hz. The profiler must be able to measure GPU workloads without its own GUI activity materially perturbing the GPU.
 
-SIA 0.1.0 should answer questions such as: Which stage of an application was running when the machine slowed down? Was the accelerator waiting for a CPU feeder? Did power or thermal throttling reduce clocks? Was the workload limited by I/O or memory pressure? Was VRAM close to capacity? Did a change make end-to-end execution faster, or merely increase a utilization percentage? SIA should present evidence and plausible bottleneck hypotheses, then direct the user to deeper specialist tools when kernel- or instruction-level analysis is required.
+SIA 0.1.0 should answer questions such as: Which stage of an application was running when the machine slowed down? Was the accelerator waiting for a CPU feeder? Did power or thermal throttling reduce clocks? Is the evidence consistent with the workload being constrained by I/O or memory pressure? Was VRAM close to capacity? Did a change make end-to-end execution faster, or merely increase a utilization percentage? SIA should present evidence and plausible bottleneck hypotheses, then direct the user to deeper specialist tools when kernel- or instruction-level analysis is required.
 
 ## 1.1 Committee conclusion
 
@@ -94,7 +124,7 @@ IRIS v21 requires low-overhead performance spans keyed by RunId/stage/workload, 
 
 9.  Fixed sample-count history: the RollingSeries capacity is passed as `capacity_secs`, but it is actually a count of samples. Increasing sample rate silently reduces the retained time window.
 
-10. No recorded causality: there is no process attribution, application span/event stream, persistent session, or replay mode, so a utilization spike cannot be tied reliably to the code that caused it.
+10. No recorded correlation: there is no process attribution, application span/event stream, persistent session, or replay mode, so a utilization spike cannot be tied reliably to the process or application stage active at the time.
 
 ## 2.3 Existing repository intent and issues
 
@@ -112,27 +142,27 @@ IRIS v21 requires low-overhead performance spans keyed by RunId/stage/workload, 
 
 # 3. Scope
 
-## 3.1 Goals
+## 3.1 Derived product goals
 
-- Preserve SIA's original product idea: a clean, legible view of what is hot, busy, constrained or idle without drowning the user in redundant counters.
+- **[O1]** Preserve SIA's original product idea: a clean, legible view of what is hot, busy, constrained or idle without drowning the user in redundant counters.
 
-- Measure whole-system behavior with sufficiently low and measurable overhead that SIA can be trusted during performance work.
+- **[O4, O5]** Measure whole-system behavior with sufficiently low and measurable overhead that SIA can be used defensibly during performance work.
 
-- Record sessions headlessly, then inspect them offline with the GUI.
+- **[O1, O4, O5]** Record sessions headlessly, then inspect them offline with the GUI.
 
-- Correlate system metrics with application spans/events and target processes.
+- **[O2]** Correlate system metrics with application spans/events and target processes.
 
-- Expose enough GPU telemetry to distinguish broad classes of under-utilization, capacity pressure and throttling.
+- **[O2, O3, O4]** Expose enough GPU telemetry to distinguish broad classes of under-utilization, capacity pressure and throttling.
 
-- Support CPU, memory, I/O and Linux pressure-stall context so GPU under-utilization can be explained by upstream bottlenecks.
+- **[O2, O3]** Support CPU, memory, I/O and Linux pressure-stall context so GPU under-utilization can be correlated with signs of upstream constraints.
 
-- Support multiple devices and partial-capability hardware without fake traces.
+- **[O2, O4]** Support multiple devices and partial-capability hardware without fake traces.
 
-- Provide general-purpose import/export and marker semantics; IRIS is a first customer, not a hard-coded special case.
+- **[O1, O2]** Provide general-purpose import/export and marker semantics; IRIS is a first customer, not a hard-coded special case.
 
-- Make measurements reproducible: session manifest, hardware/software fingerprint, clock model, sampling plan, dropped-sample/event counts and SIA version are all recorded.
+- **[O4]** Make measurements reproducible: session manifest, hardware/software fingerprint, clock model, sampling plan, dropped-sample/event counts and SIA version are all recorded.
 
-- Remain a small Rust application with a comprehensible architecture and conservative dependency set.
+- **[O1]** Remain a small Rust application with a comprehensible architecture and conservative dependency set.
 
 ## 3.2 Non-goals for SIA 0.1
 
@@ -154,13 +184,26 @@ IRIS v21 requires low-overhead performance spans keyed by RunId/stage/workload, 
 
 ## 3.3 Normative terms
 
-MUST/MUST NOT are release requirements. SHOULD/SHOULD NOT are strong defaults that may be changed only with a documented reason. MAY denotes an optional capability. 'Available' means the provider can obtain the metric reliably on the current device and permission context; absence is not treated as zero.
+Only uppercase MUST, MUST NOT, SHOULD, SHOULD NOT and MAY are normative. Lowercase uses have their ordinary descriptive meaning.
+
+- **MUST/MUST NOT** are release requirements. They are reserved for behavior whose absence would invalidate SIA's measurements, undermine safe or secure observation, break an essential interoperability contract, or prevent the SIA 0.1 acceptance criteria from being met.
+- **SHOULD/SHOULD NOT** are strong defaults that may be changed only with a documented reason.
+- **MAY** denotes a genuinely optional capability.
+- **Guidance** describes a preferred implementation approach but is not normative. An implementation may depart from Guidance when it continues to satisfy the applicable requirements and objectives.
+
+Each MUST or SHOULD supports at least one objective. A `Supports: O#` marker beneath a normative section applies to its contained requirements unless a table objective column or inline objective tag states otherwise. A normative statement that cannot be defended against an objective is removed, downgraded or rewritten.
+
+Objectives do not create unstated requirements. New requirements arise from an identified system need, not from an attempt to populate or balance the objective structure.
+
+'Available' means the provider can obtain the metric reliably on the current device and permission context; absence is not treated as zero. Where the specification explicitly uses 'MUST where available', the obligation is to represent a reliably exposed capability, not to require every supported machine to provide it.
 
 # 4. Architecture
 
+**Supports:** O1, O2, O4, O5
+
 ## 4.1 Component model
 
-SIA remains one product and one executable. The implementation should be split into modules with narrow interfaces rather than separate services. The GUI, headless recorder and offline viewer all consume the same typed session/metric model.
+SIA remains one product and one executable. Collection, recording and presentation are separated through narrow typed interfaces rather than separate services. The GUI, headless recorder and offline viewer all consume the same typed session/metric model.
 
 ```text
 src/  
@@ -198,10 +241,9 @@ overview.rs
 timeline.rs  
 processes.rs  
 diagnostics.rs  
-diagnostics.rs
 ```
 
-The exact file split is non-normative; the module boundaries are normative. A future reason to split crates must be justified by build/test/reuse needs rather than architecture fashion.
+The separation of collection, recording and presentation through narrow typed interfaces is normative. The illustrated file/module arrangement is Guidance. A different arrangement may be used when justified by build, test or reuse needs without weakening that separation.
 
 ## 4.2 Runtime data flow
 
@@ -231,11 +273,11 @@ Sampling MUST continue independently of GUI frame rate or observer-client state.
 
 ### 4.3.1 Observer source and operator contract
 
-The GUI consumes a SessionSource abstraction with three equivalent presentation sources: LocalLiveSource, ObserverLiveSource and RecordedSessionSource. All three expose the same MetricDescriptor/Sample/Event/Status model, and the GUI must not contain separate rendering logic for observer data. Target identity is part of the source and is always displayed.
+The GUI consumes a SessionSource abstraction with three equivalent presentation sources: LocalLiveSource, ObserverLiveSource and RecordedSessionSource. All three expose the same MetricDescriptor/Sample/Event/Status model. Using one rendering path for the three source variants is Guidance rather than a required internal structure. Target identity is part of the source and is always displayed.
 
 The normal operator path is intentionally copyable. After `./sia -headless`, SIA enumerates suitable non-loopback LAN addresses and prints the exact observer command for each address, for example `./sia -o 192.168.1.42 big-pink-elephant`. The observer uses a fixed default SIA port chosen by the implementation ADR, so a port need not appear in the ordinary command. If the default port is unavailable or an override is requested, headless prints `IP:port` in the exact command. The versioned framed transport carries session/capability metadata, metric descriptors, samples, events, data-quality records and terminal status.
 
-Observer streaming MUST be bounded and nonblocking with respect to authoritative collection and local recording. If the network or observer GUI cannot keep up, the stream may coalesce/drop optional display samples while preserving ordering/sequence/loss accounting; it may never stall the collector, recorder or profiled application. Target monotonic timestamps and target identity remain authoritative; observer-wall-clock timestamps are presentation metadata only.
+Observer streaming MUST be bounded and nonblocking with respect to authoritative collection and local recording. If the network or observer GUI cannot keep up, the stream MAY coalesce or drop optional display samples while preserving ordering, sequence and loss accounting; it MUST NOT stall the collector, recorder or profiled application. Target monotonic timestamps and target identity remain authoritative; observer-wall-clock timestamps are presentation metadata only.
 
 Observer live viewing is a first-class diagnosis/operations feature but not automatically a benchmark-authoritative mode. Serialization, encryption and network transmission consume target resources. Performance claims use target-local headless recording with no observer attached unless a separately registered repeated/interleaved equivalence experiment demonstrates that `headless + observer` is decision-neutral for that workload/hardware profile.
 
@@ -263,15 +305,15 @@ On the observer computer type:
 ./sia -o 192.168.1.42 big-pink-elephant  
 ```
 
-If more than one plausible LAN address exists, print one complete command per address. If a non-default port is necessary, print `IP:port`. The operator must not need to infer a port, concatenate a credential, or consult documentation.
+If more than one plausible LAN address exists, print one complete command per address. If a non-default port is necessary, print `IP:port`. The operator MUST NOT need to infer a port, concatenate a credential, or consult documentation.
 
-The exact wording may evolve with information-design review, but the semantic fields and complete copyable command are normative.
+The exact wording is Guidance and may evolve with information-design review, but the semantic fields and complete copyable command MUST remain.
 
 ### 4.3.3 Pairing attempts, failure and network exposure
 
-A failed pairing attempt reveals only failure. Online guesses are rate-limited and bounded by a policy derived in the security ADR; collection and local recording continue normally during backoff. One active observer is sufficient for SIA 0.1. While one observer is connected, additional observer attempts are rejected without disturbing the active stream. If the observer disconnects, the same session phrase remains valid for reconnect until the headless session ends. If the operator believes the phrase is compromised, the simple 0.1 recovery is to stop/restart the headless SIA session rather than add a remote credential-management control path. The PAKE must make captured traffic unusable for offline phrase guessing.
+A failed pairing attempt reveals only failure. Online guesses are rate-limited and bounded by a policy derived in the security ADR; collection and local recording continue normally during backoff. One active observer is sufficient for SIA 0.1. While one observer is connected, additional observer attempts are rejected without disturbing the active stream. If the observer disconnects, the same session phrase remains valid for reconnect until the headless session ends. If the operator believes the phrase is compromised, the simple 0.1 recovery is to stop/restart the headless SIA session rather than add a remote credential-management control path. The PAKE MUST make captured traffic unusable for offline phrase guessing.
 
-The default `sia -o <IP> <phrase>` form deliberately favors human usability. The phrase can therefore appear transiently in the observer machine's process arguments and may be retained by that user's shell history. This is acceptable only because the credential is ephemeral and dies with the headless session, and because local users on the observer machine are inside the 0.1 trust boundary. SIA should overwrite/redact its own argv copy where the platform permits, but cannot reliably control shell history. An optional `sia -o <IP>` prompt mode MAY be provided for users who do not want the phrase in shell history; the headless machine still prints the simple full command by default.
+The default `sia -o <IP> <phrase>` form deliberately favors human usability. The phrase can therefore appear transiently in the observer machine's process arguments and may be retained by that user's shell history. This is acceptable only because the credential is ephemeral and dies with the headless session, and because local users on the observer machine are inside the 0.1 trust boundary. SIA SHOULD overwrite or redact its own argv copy where the platform permits, but cannot reliably control shell history. An optional `sia -o <IP>` prompt mode MAY be provided for users who do not want the phrase in shell history; the headless machine still prints the simple full command by default.
 
 The 0.1 threat model is a trusted or semi-trusted local LAN: resist passive sniffing, casual unauthorized attachment and active man-in-the-middle attempts that do not know the displayed phrase. Internet exposure is unsupported. By default, headless ranks plausible private/link-local LAN interfaces, excludes loopback and obviously virtual/container/tunnel interfaces from the recommended copy/paste list unless explicitly requested, binds only to the selected safe interface set, and prints every listening address. `--listen`/`--port` override discovery. IPv6 commands use unambiguous bracketed address syntax. A future Internet-capable remote mode requires a separate security review.
 
@@ -285,6 +327,8 @@ Any SIA measurement used to choose an IRIS CPU/GPU implementation or claim a spe
 
 # 5. Time, identity and data model
 
+**Supports:** O2, O4
+
 ## 5.1 Clock contract
 
 Native SIA samples use `clock_gettime(CLOCK_MONOTONIC)` and record nanoseconds in an explicitly named `linux_clock_monotonic` domain. The session records Linux boot ID and time-namespace identity. This makes timestamps comparable across ordinary processes on the same boot only when they inhabit compatible time namespaces. SIA also records CLOCK_BOOTTIME/UTC synchronization anchors at session start/end and periodically in long sessions so suspend/resume or clock-domain translation can be detected. The authoritative sample timestamp is the actual observation time, never a synthetic counter advanced by the configured sample period.
@@ -293,7 +337,7 @@ Native SIA samples use `clock_gettime(CLOCK_MONOTONIC)` and record nanoseconds i
 
 - Wall-clock/NTP changes do not reorder native samples because session ordering uses CLOCK_MONOTONIC; UTC exists only for human correlation/export.
 
-- Imported events MUST declare `clock_domain`. A source on another monotonic/custom clock needs one or more synchronization anchors; otherwise SIA may align only approximately and MUST label the quality.
+- An imported event MUST declare a real `clock_domain`, provide synchronization anchors, or explicitly declare its clock domain `unknown`. `clock_domain` MAY be absent only for a live event that SIA timestamps on receipt and marks `arrival_timestamped`. SIA MUST NOT claim exact alignment without adequate clock identity or synchronization anchors; approximate alignment MUST be labeled.
 
 - A live event received without a sender timestamp is stamped on receipt and marked `arrival_timestamped`; transport latency is therefore part of its alignment uncertainty.
 
@@ -352,7 +396,7 @@ status: ok\|stale\|temporarily_unavailable\|error
 ```text
 ApplicationEvent {  
 timestamp_ns: optional u64  
-clock_domain: optional string  
+clock_domain: optional string // absent only for an arrival_timestamped live event; imported unknown is explicit  
 utc_ns: optional i128  
 boot_id: optional string  
 time_namespace_id: optional string  
@@ -375,6 +419,8 @@ The event model intentionally mirrors the general slice/span/event/counter conce
 
 # 6. Sampling and low-overhead design
 
+**Supports:** O1, O4, O5
+
 ## 6.1 SamplingPlan
 
 SIA uses a versioned SamplingPlan rather than one hard-coded global frequency. Each collector declares metrics, temporal semantics/source resolution, estimated collection cost, cadence and scheduling phase. The scheduler derives absolute CLOCK_MONOTONIC deadlines. Slow/expensive collectors may run less often or be phase-staggered so they do not create artificial periodic load spikes; SIA does not claim such measurements are simultaneous unless their actual observation windows overlap.
@@ -385,7 +431,7 @@ Phase 0 MUST benchmark candidate cadences on the target IRIS-class machine befor
 
 SIA is a sampled profiler, not a complete event tracer. A source may itself average over an undocumented or vendor-defined interval; polling it faster does not manufacture higher temporal resolution. Each metric descriptor therefore records the best known source resolution/window semantics. The UI shows sampling cadence/resolution on demand, and diagnostics MUST NOT infer that a short event did not occur merely because no sampled point captured it. For counters such as CPU time, DRM engine busy time or PSI totals, SIA SHOULD prefer interval deltas over repeatedly treating the source as an instantaneous gauge.
 
-Provider cadences are benchmarked independently. Faster sampling is justified only when it reveals decision-useful structure at acceptable observer cost and the underlying source can actually support it. SIA may use event/poll mechanisms (for example PSI triggers) for specific conditions where the kernel exposes them, but v0.1 does not require a general event-driven kernel tracer.
+Provider cadences are benchmarked independently. Faster sampling is justified only when it reveals decision-useful structure at acceptable observer cost and the underlying source can actually support it. SIA MAY use event/poll mechanisms (for example PSI triggers) for specific conditions where the kernel exposes them, but v0.1 does not require a general event-driven kernel tracer.
 
 ### 6.1.2 Prefer source-native counters/sample buffers
 
@@ -393,29 +439,33 @@ When a source provides cumulative counters or a timestamped internal sample buff
 
 ## 6.2 GUI repaint policy
 
+The implementation techniques in this subsection are Guidance; the measured responsiveness, information-preservation and observer-effect outcomes remain authoritative.
+
 - Remove the unconditional 16-ms repaint schedule for static data.
 
 - Request repaint when a new sample/event arrives, when an animation is active, or when the user interacts; otherwise sleep until the next expected update.
 
-- Typography/style objects SHOULD be rebuilt only when settings change, not on every frame.
+- Rebuild typography/style objects only when settings change, not on every frame.
 
-- Plot geometry for unchanged data SHOULD be cached; the GUI SHOULD NOT perform O(history_length) allocation/copy work on every idle repaint.
+- Cache plot geometry for unchanged data and avoid O(history_length) allocation/copy work on every idle repaint.
 
-- Long timelines SHOULD use display decimation that preserves extrema/spikes (for example min/max envelopes per pixel bucket) rather than dropping arbitrary points.
+- For long timelines, use display decimation that preserves extrema/spikes (for example min/max envelopes per pixel bucket) rather than dropping arbitrary points.
 
 - GUI performance itself is benchmarked and shown in the self-overhead panel.
 
 ## 6.3 Collection efficiency
 
+The implementation techniques in this subsection are Guidance except for explicitly normative statements; the benchmark and failure-isolation requirements remain authoritative.
+
 - Sensor/device discovery occurs at startup and on explicit rescan/hotplug events; it is not repeated per sample.
 
-- File descriptors or parsed topology metadata SHOULD be reused where safe rather than reopening large numbers of sysfs/procfs files on every tick.
+- Reuse file descriptors or parsed topology metadata where safe rather than reopening large numbers of sysfs/procfs files on every tick.
 
-- Providers SHOULD batch related queries when the underlying API permits it.
+- Batch related queries when the underlying API permits it.
 
 - Sampling threads MUST avoid busy waiting.
 
-- No collection path may block the target application.
+- A collection path MUST NOT block the target application.
 
 - Expensive optional metrics can run at a slower cadence than core utilization/pressure metrics.
 
@@ -425,20 +475,22 @@ When a source provides cumulative counters or a timestamped internal sample buff
 
 Before profiler implementation proceeds beyond Phase 0, the project freezes an `ObserverEffectTest` ADR containing practical equivalence margins for headless monitor/profile modes and a separate live-GUI observer characterization. Margins are stated in terms of target-workload elapsed time/throughput and, where relevant, accelerator behavior; they are not arbitrary SIA-CPU percentages. The test design uses repeated interleaved control/SIA trials, records thermal/power/background state, and reports effect sizes with uncertainty intervals rather than one lucky timing. The number of repetitions is chosen from observed variance/desired precision following rigorous benchmarking principles rather than a fixed magic count.
 
-External timing/benchmark harness measurements are authoritative for observer-effect claims; SIA must not certify its own neutrality solely from counters it collected itself. Control and profiled trials use the same launch wrapper/environment/working directory and differ only in whether collection is enabled, so parent-process/setup effects are not confused with measurement overhead. Results record target elapsed/throughput distribution, SIA CPU time/RSS/I/O, SIA GPU activity where any GUI is active, sample loss, collector lateness, target GPU clocks/power/temperature and machine/runtime fingerprint. Sessions with uncontrolled suspend, major background interference or thermal-state drift are retained but excluded or stratified according to the predeclared benchmark protocol.
+External timing/benchmark harness measurements are authoritative for observer-effect claims; SIA MUST NOT certify its own neutrality solely from counters it collected itself. Control and profiled trials use the same launch wrapper/environment/working directory and differ only in whether collection is enabled, so parent-process/setup effects are not confused with measurement overhead. Results record target elapsed/throughput distribution, SIA CPU time/RSS/I/O, SIA GPU activity where any GUI is active, sample loss, collector lateness, target GPU clocks/power/temperature and machine/runtime fingerprint. Sessions with uncontrolled suspend, major background interference or thermal-state drift are retained but excluded or stratified according to the predeclared benchmark protocol.
 
 # 7. Metric catalog
+
+**Supports:** O1, O2, O3, O4
 
 ## 7.1 System and CPU
 
 | Metric family                                        | Required/optional             | Source                                                                                                                                                                                                                                                          | Purpose                                         |
 |------------------------------------------------------|-------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------|
 | System + per-core CPU utilization                    | MUST                          | sysinfo or procfs                                                                                                                                                                                                                                               | Identify CPU saturation and feeder bottlenecks. |
-| CPU frequency per logical/core/package where exposed | MUST where available          | cpufreq sysfs                                                                                                                                                                                                                                                   | Detect frequency collapse/boost behavior.       |
-| CPU/package temperatures                             | MUST where available          | hwmon                                                                                                                                                                                                                                                           | Thermal context.                                |
+| CPU frequency per logical/core/package where exposed | SHOULD where available        | cpufreq sysfs                                                                                                                                                                                                                                                   | Detect frequency collapse/boost behavior.       |
+| CPU/package temperatures                             | SHOULD where available        | hwmon                                                                                                                                                                                                                                                           | Thermal context.                                |
 | Load/run-queue context                               | SHOULD                        | Use load averages plus runnable-task indicators such as `procs_running`; distinguish queued demand from utilization.                                                                                                                                          | Separate CPU demand from low utilization.       |
-| Pressure Stall Information: CPU/memory/I/O           | MUST where kernel exposes PSI | Use `/proc/pressure/\*` totals as cumulative counters and derive interval stall share from deltas; avg10/60/300 are context only. CPU `some` is the principal system CPU-pressure signal; interpret provider/kernel-specific `full` semantics cautiously. | Direct system-stress/stall signal.              |
-| Context switches / interrupts                        | SHOULD                        | /proc/stat                                                                                                                                                                                                                                                      | Diagnose scheduling/interrupt pressure.         |
+| Pressure Stall Information: CPU/memory/I/O           | SHOULD where kernel exposes PSI | Use `/proc/pressure/\*` totals as cumulative counters and derive interval stall share from deltas; avg10/60/300 are context only. CPU `some` is the principal system CPU-pressure signal; interpret provider/kernel-specific `full` semantics cautiously. | Direct system-stress/stall signal.              |
+| Context switches / interrupts                        | MAY                           | /proc/stat                                                                                                                                                                                                                                                      | Diagnose scheduling/interrupt pressure.         |
 | CPU package energy/power                             | MAY                           | RAPL sysfs                                                                                                                                                                                                                                                      | Power/thermal explanation.                      |
 | Thermal throttle counters/reasons                    | MAY where stable ABI exists   | sysfs/vendor                                                                                                                                                                                                                                                    | Direct throttle evidence.                       |
 
@@ -448,8 +500,8 @@ External timing/benchmark harness measurements are authoritative for observer-ef
 |------------------------------|----------------------|------------------------------------------------------------------|
 | RAM used/available/total     | MUST                 | Capacity and pressure context.                                   |
 | Swap used + swap-in/out rate | SHOULD               | Detect memory overcommit effects.                                |
-| Major/minor page faults      | SHOULD               | Correlate stalls with paging/fault activity.                     |
-| Memory PSI                   | MUST where available | Detect actual memory stall pressure rather than occupancy alone. |
+| Major/minor page faults      | MAY                  | Correlate stalls with paging/fault activity.                     |
+| Memory PSI                   | SHOULD where available | Detect actual memory stall pressure rather than occupancy alone. |
 
 ## 7.3 Storage and network
 
@@ -457,9 +509,9 @@ External timing/benchmark harness measurements are authoritative for observer-ef
 |-----------------------------------------------|----------------------|-------------------------------------------------------|
 | Per-device read/write bytes/s                 | SHOULD               | /proc/diskstats or stable equivalent.                 |
 | I/O operations + device busy/queue indicators | SHOULD               | Enough to distinguish ingest/storage stalls.          |
-| I/O PSI                                       | MUST where available | /proc/pressure/io.                                    |
+| I/O PSI                                       | SHOULD where available | /proc/pressure/io.                                    |
 | Per-target-process read/write bytes/s         | MUST in process mode | /proc/<pid>/io where permitted.                     |
-| Per-interface RX/TX bytes/s                   | SHOULD               | Useful for remote data ingestion and model downloads. |
+| Per-interface RX/TX bytes/s                   | MAY                  | Useful for remote data ingestion and model downloads. |
 
 ## 7.4 Common GPU semantic model
 
@@ -471,12 +523,12 @@ GPU providers expose a capability set. The common UI uses stable semantic concep
 | Compute/graphics utilization                  | MUST if provider supports     | Time busy is not the same as fraction of peak FLOPS.                                                       |
 | Memory-controller / memory-access utilization | SHOULD if provider supports   | Distinct from VRAM occupancy and not a direct bandwidth-saturation percentage unless vendor defines it so. |
 | VRAM used/free/total                          | MUST if discrete VRAM exists  | Capacity occupancy, not bandwidth.                                                                         |
-| Temperature                                   | MUST where supported          | Combine with throttle evidence.                                                                            |
+| Temperature                                   | SHOULD where supported        | Combine with throttle evidence.                                                                            |
 | SM/graphics + memory clocks                   | SHOULD                        | Explain idle/power/throttle states.                                                                        |
 | Power usage + enforced/board limit            | SHOULD                        | Evidence for power capping and energy use.                                                                 |
 | Performance/power state                       | SHOULD                        | Vendor-specific meaning shown in details.                                                                  |
 | Throttle/clock event reasons                  | SHOULD                        | Strong direct diagnostic evidence.                                                                         |
-| PCIe link width/speed + RX/TX throughput      | SHOULD where available        | Useful for transfer-heavy workloads; sampling interval must be recorded.                                   |
+| PCIe link width/speed + RX/TX throughput      | SHOULD where available        | Useful for transfer-heavy workloads; sampling interval MUST be recorded.                                   |
 | Fan / memory temperature                      | MAY                           | Hardware-dependent.                                                                                        |
 | Per-process GPU memory/utilization            | SHOULD where provider permits | Correlate target process with system GPU activity.                                                         |
 
@@ -506,7 +558,7 @@ The existing `nvml-wrapper` integration is retained but generalized from a singl
 
 ## 7.6 AMD provider
 
-AMDGPU support is capability-first and SHOULD avoid requiring ROCm for basic monitoring. Stable kernel interfaces expose VRAM totals/usage and many cards expose utilization/temperature/power/clock information through DRM sysfs and hwmon. The provider MUST fix the current conceptual gap where AMD temperature sensors can be classified as GPU while GPU utilization/VRAM traces remain absent.
+An AMDGPU provider MAY be implemented capability-first without requiring ROCm for basic monitoring. Stable kernel interfaces expose VRAM totals/usage and many cards expose utilization/temperature/power/clock information through DRM sysfs and hwmon. If implemented, the provider MUST represent utilization and VRAM capabilities honestly and MUST NOT imply complete or hardware-verified support when only temperature or fixture-tested capabilities are available.
 
 - Discover AMD DRM devices and map them to hwmon/PCI identity.
 
@@ -516,17 +568,19 @@ AMDGPU support is capability-first and SHOULD avoid requiring ROCm for basic mon
 
 - Expose temperature, power and clocks through hwmon/sysfs where the device publishes them.
 
-- ROCm SMI MAY be an optional enrichment provider later, but basic SIA operation must not require installing the ROCm stack.
+- ROCm SMI MAY be an optional enrichment provider later, but basic SIA operation MUST NOT require installing the ROCm stack.
 
 ## 7.7 Intel provider
 
-Intel support likewise uses capability discovery. The preferred unprivileged process-level route is the kernel's standardized DRM client usage statistics in `/proc/<pid>/fdinfo/\*` where the active driver exports them: per-engine busy/cycle counters and memory-region accounting can be converted to interval utilization with their documented capacities/clock semantics. Xe has documented support; i915 and other DRM drivers may expose partially compatible keys. Device-wide frequency/throttle/temperature data come from stable sysfs/hwmon interfaces. Unsupported keys are absent, not guessed. This same DRM parser SHOULD be reusable for AMD/other DRM drivers where they implement the standardized fields.
+Intel support likewise uses capability discovery. The preferred unprivileged process-level route is the kernel's standardized DRM client usage statistics in `/proc/<pid>/fdinfo/\*` where the active driver exports them: per-engine busy/cycle counters and memory-region accounting can be converted to interval utilization with their documented capacities/clock semantics. Xe has documented support; i915 and other DRM drivers may expose partially compatible keys. Device-wide frequency/throttle/temperature data come from stable sysfs/hwmon interfaces. Unsupported keys are absent, not guessed. Reusing the DRM parser for AMD or other DRM drivers that implement the standardized fields is Guidance rather than a required code structure.
 
 # 8. Process and application attribution
 
+**Supports:** O2, O3, O4, O5
+
 ## 8.1 Target process mode
 
-`sia -headless` can attach to an existing PID or launch a command and profile it until exit. On kernels that support pidfds, SIA SHOULD open/retain a pidfd for the attached/launched root process so lifecycle detection is not vulnerable to PID recycling; PID plus `/proc/<pid>/stat` start time remains the recorded stable identity and fallback. Descendant discovery uses recorded PID/start-time relationships; a cgroup-based launch enclosure may be evaluated later if ordinary process-tree tracking proves insufficient, but is not required for v0.1.
+`sia -headless` can attach to an existing PID or launch a command and profile it until exit. SIA retains race-resistant identity for the observed root process and descendants. PID plus `/proc/<pid>/stat` start time is the recorded stable identity and fallback; retaining a pidfd for an attached/launched root where supported is Guidance for stronger lifecycle detection. Descendant discovery uses recorded PID/start-time relationships; a cgroup-based launch enclosure may be evaluated later if ordinary process-tree tracking proves insufficient, but is not required for v0.1.
 
 ```console
 sia -headless --pid 12345 --output run.sia/  
@@ -564,13 +618,15 @@ Process names and executable paths are useful; full command lines, environment v
 
 # 9. Application markers and trace import
 
+**Supports:** O1, O2, O3, O4, O5
+
 ## 9.1 Offline import is authoritative for IRIS
 
 IRIS writes its own stable performance trace. For the first integration, SIA MUST import the structured JSONL span/event form plus run-manifest clock/hardware metadata; Parquet support is optional because low-volume trace events do not justify a heavy reader dependency by themselves. SIA aligns the imported artifact with a SIA session only when clock/boot identity or synchronization anchors make that defensible. This offline import is the primary IRIS integration because it creates no runtime dependency and no target-side backpressure.
 
 ## 9.2 Live marker transport
 
-For generic applications that want live annotations, SIA SHOULD provide a local user-scoped Unix datagram endpoint under `XDG_RUNTIME_DIR` plus a `sia mark` CLI. The socket directory/file is mode-restricted to the current user and ownership is verified before binding/sending. Datagram semantics avoid target blocking; each sender SHOULD include a monotonically increasing sequence so received gaps can be noticed, and send failures are surfaced to the sender when the OS reports them. Messages/attribute maps are bounded. SIA MUST NOT claim end-to-end losslessness because the final/lone datagram can be lost without creating a sequence gap. Offline trace import remains authoritative for IRIS.
+For generic applications that want live annotations, SIA MAY provide a local user-scoped Unix datagram endpoint under `XDG_RUNTIME_DIR` plus a `sia mark` CLI. If provided, the socket directory/file is mode-restricted to the current user and ownership is verified before binding/sending. Datagram semantics avoid target blocking. SIA-supplied emitters MAY include a monotonically increasing sequence so received gaps can be noticed, and send failures are surfaced when the OS reports them. Messages/attribute maps are bounded. SIA MUST NOT claim end-to-end losslessness because the final/lone datagram can be lost without creating a sequence gap. Offline trace import remains authoritative for IRIS.
 
 ```console
 sia mark begin --source iris --trace \$RUN_ID --span path-3 --category compute --name PATH_SIMULATION --attr batch=3  
@@ -582,9 +638,11 @@ A language-specific SIA SDK is not required. Tiny adapters MAY be supplied for R
 
 ## 9.3 Mapping to existing tracing standards
 
-SIA's internal event semantics SHOULD remain convertible to Perfetto TrackEvent/Chrome-style slices, counters and instants, and Rust applications SHOULD be able to write an adapter from `tracing` spans/events. Perfetto and OpenTelemetry are not mandatory SIA dependencies in v0.1; adopting a large external tracing runtime merely to draw local stage bars would violate the simplicity objective.
+As Guidance, SIA's internal event semantics should remain reasonably convertible to Perfetto TrackEvent/Chrome-style slices, counters and instants. Rust/Perfetto adapters MAY be added. Perfetto and OpenTelemetry are not mandatory SIA dependencies in v0.1; adopting a large external tracing runtime merely to draw local stage bars would violate O1.
 
 # 10. Recording and session format
+
+**Supports:** O1, O2, O4, O5
 
 ## 10.1 Session directory
 
@@ -644,6 +702,8 @@ Session files are append-only and SHOULD remain readable after an unclean exit. 
 
 # 11. GUI and analysis experience
 
+**Supports:** O1, O2, O3, O4
+
 ## 11.1 Preserve the overview
 
 The existing at-a-glance overview remains a first-class view: a user should still answer 'what is hot, busy or pressured?' without configuring the profiler. The visual architecture follows a Tufte/Shneiderman-style progression: overview first; synchronized zoom/filter; details on demand. Profiling depth is revealed progressively rather than placing every available counter on the opening screen.
@@ -658,11 +718,11 @@ The existing at-a-glance overview remains a first-class view: a user should stil
 
 - Use position and length for precise quantitative comparisons. Avoid 3-D effects, gauges/dials, decorative gradients, area/angle encodings and animation that does not represent changing data.
 
-- Color has semantic work: reserve strong/saturated color primarily for selection, warnings and distinct resource classes; normal traces should not require a rainbow. Never make color the sole carrier of status.
+- Color has semantic work: reserve strong/saturated color primarily for selection, warnings and distinct resource classes; normal traces SHOULD NOT require a rainbow. Meaning MUST NOT be encoded by color alone.
 
 - Prefer direct labels at the edge/selection and concise hover/detail text over large legends when practical. A legend is secondary navigation, not the main decoding task.
 
-- Axes/scales may adapt, but a live scale change must be visually stable/obvious. Utilization percentages use a fixed 0-100 scale when their semantics genuinely are percentages; other scales may lock for the selected interval/session to avoid exaggerating tiny changes.
+- Axes and scales MAY adapt, but a live scale change MUST be visually stable and obvious. Utilization percentages use a fixed 0-100 scale when their semantics genuinely are percentages; other scales MAY lock for the selected interval or session to avoid exaggerating tiny changes.
 
 - Missing/unavailable data appear as gaps/status, never interpolated through or plotted at zero unless zero is an actual observed value.
 
@@ -693,7 +753,7 @@ The profiler header always shows the data source: LOCAL LIVE, OBSERVER LIVE <tar
 
 - Multiple GPUs are selectable and can be displayed together or separately.
 
-- No hard 1200x880 content minimum may make the application unusable on smaller screens; panes/scrolling/layout must respond to available space.
+- A hard content minimum MUST NOT make the application unusable on smaller screens; panes, scrolling and layout MUST respond to available space.
 
 - Historical/live display windows operate on timestamp ranges rather than sample counts.
 
@@ -709,17 +769,19 @@ For coarse vendor metrics such as NVML utilization, a short application span may
 
 ## 11.6 No-manual usability gate
 
-Before the profiler UI is accepted, engineers who did not design SIA are given representative recorded sessions and no documentation. They must be able to determine, from evidence in the UI: (1) what resource is constrained or whether none is proven; (2) which process/application span coincides with it; (3) whether GPU activity/VRAM/thermal-power state is consistent with effective use; (4) what measurement limitation weakens the conclusion; and (5) what deeper tool or code region to inspect next. All five tasks must be answerable without external instruction; completion time and wrong turns are recorded as design diagnostics, but v0.1 does not invent a universal seconds-to-answer threshold before pilot data exist.
+Before the profiler UI is accepted, engineers who did not design SIA are given representative recorded sessions and no documentation. They MUST be able to determine, from evidence in the UI: (1) what resource is constrained or whether none is proven; (2) which process/application span coincides with it; (3) whether GPU activity/VRAM/thermal-power state is consistent with effective use; (4) what measurement limitation weakens the conclusion; and (5) what deeper tool or code region to inspect next. All five tasks MUST be answerable without external instruction; completion time and wrong turns are recorded as design diagnostics, but v0.1 does not invent a universal seconds-to-answer threshold before pilot data exist.
 
 ## 11.7 Information-design review gate
 
 Before the new profiler timeline/detail UI is merged, static wireframes or a nonfunctional prototype are reviewed jointly by the Tufte-style information-design, operator-HCI, accessibility and product-simplicity reviewers. The review explicitly asks which elements can be removed, whether every quantitative comparison has an honest scale/encoding, whether the default view contains only orientation-level information, and whether the user's eye is drawn first to the important state rather than decoration. This gate occurs before substantial polishing so visual complexity is not baked into code.
 
-# 12. Bottleneck diagnostics
+# 12. Evidence-backed bottleneck indications
+
+**Supports:** O1, O3, O4
 
 ## 12.1 Philosophy
 
-SIA diagnoses broad bottleneck classes, not kernel-level root cause. Every finding has one of three claim levels: `Observed` for a directly reported condition such as a vendor throttle reason; `Consistent with` for a multi-signal hypothesis such as CPU feeder starvation; or `Insufficient evidence`. There is no numeric confidence score. Each finding lists the exact time range, triggering observations, sampling/clock limitations and the next specialist check. The synchronized evidence remains primary; findings are annotations, not a substitute for looking at the data.
+SIA characterizes evidence for broad bottleneck classes; it does not determine kernel-level or instruction-level root cause. Every finding has one of three claim levels: `Observed` for a directly reported condition such as a vendor throttle reason; `Consistent with` for a multi-signal hypothesis such as CPU feeder starvation; or `Insufficient evidence`. There is no numeric confidence score. Each finding lists the exact time range, triggering observations, sampling/clock limitations and the next specialist check. The synchronized evidence remains primary; findings are annotations, not a substitute for looking at the data.
 
 | Finding                    | Evidence pattern                                                                                                                   | Allowed wording / next step                                                                                                                                   |
 |----------------------------|------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -735,15 +797,17 @@ SIA diagnoses broad bottleneck classes, not kernel-level root cause. Every findi
 
 ### 12.1.1 Diagnostic trigger governance
 
-Diagnostic thresholds must be physically defined (for example an explicit vendor throttle state), derived from hardware capacity/provider semantics, or established prospectively in the benchmark/fixture suite. They may not be tuned on a desired diagnosis. An inferred rule MUST expose its trigger logic in the UI/spec. Automatic diagnostics are not an IRIS-readiness gate; a correct trace/timeline is more valuable than a clever but unreliable label.
+Diagnostic thresholds MUST be physically defined (for example an explicit vendor throttle state), derived from hardware capacity/provider semantics, or established prospectively in the benchmark/fixture suite. They MUST NOT be tuned on a desired diagnosis. An inferred rule MUST expose its trigger logic in the UI/spec. Automatic diagnostics are not an IRIS-readiness gate; a correct trace/timeline is more valuable than a clever but unreliable label.
 
 The diagnostic patterns below are candidate Phase 5 rules, not SIA 0.1 release requirements. Direct vendor/kernel conditions may graduate quickly; inferential patterns require fixture validation and explicit trigger definitions.
 
 ## 12.2 Deep-tool boundary
 
-When the evidence requires scheduler traces, system calls, CPU hardware counters, CUDA kernel launch timelines or warp/cache/tensor-core metrics, SIA should recommend the appropriate deeper tool rather than duplicate it. For NVIDIA, Nsight Systems is the next step for CPU/GPU scheduling, CUDA/API and transfer timelines; Nsight Compute is the next step for kernel-level compute/memory diagnosis. Linux perf/ftrace/Perfetto are appropriate for CPU/kernel scheduling questions.
+When the evidence requires scheduler traces, system calls, CPU hardware counters, CUDA kernel launch timelines or warp/cache/tensor-core metrics, SIA SHOULD recommend the appropriate deeper tool rather than duplicate it. For NVIDIA, Nsight Systems is the next step for CPU/GPU scheduling, CUDA/API and transfer timelines; Nsight Compute is the next step for kernel-level compute/memory diagnosis. Linux perf/ftrace/Perfetto are appropriate for CPU/kernel scheduling questions.
 
 # 13. Command-line contract
+
+**Supports:** O1, O5
 
 | Command                                                     | Purpose                                                                                                                                                                                                                               |
 |-------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -763,15 +827,17 @@ When the evidence requires scheduler traces, system calls, CPU hardware counters
 
 ## 13.1 Configuration
 
-CLI flags override a small user config. Configuration may set sampling presets, enabled metric groups, recording path, process tracking, privacy policy and UI preferences. Hardware/provider capabilities are discovered, not configured as if they existed. The configuration format should stay human-readable.
+CLI flags override a small user config. Configuration may set sampling presets, enabled metric groups, recording path, process tracking, privacy policy and UI preferences. Hardware/provider capabilities are discovered, not configured as if they existed. The configuration format SHOULD stay human-readable.
 
 # 14. SIA performance engineering
+
+**Supports:** O4, O5
 
 ## 14.0 Headless implementation invariant
 
 The `sia -headless` execution path is tested to ensure no eframe window/render loop and no wgpu/OpenGL/Vulkan device/context is initialized. GUI renderer/backend choice is benchmarked separately for local-live use, but no GUI result is used as the authoritative GPU optimization measurement unless its observer-effect equivalence gate passes.
 
-## 14.1 SIA must profile itself
+## 14.1 SIA self-observation
 
 A performance profiler with opaque overhead is not trustworthy. Every recorded session includes SIA self CPU/RSS/I/O, sampling latency and queue/drop statistics. `sia benchmark self` runs fixed collector and GUI workloads and stores results in a machine-readable benchmark artifact.
 
@@ -787,7 +853,7 @@ A performance profiler with opaque overhead is not trustworthy. Every recorded s
 | GPU compute                                     | Headless observer effect, utilization/power/clocks, process attribution.                                                                         |
 | GPU transfer-heavy                              | PCIe/compute timeline and diagnostic caution.                                                                                                    |
 | GPU thermal/power capped (where safe/available) | Throttle reason detection; no automatic cap modification.                                                                                        |
-| Mixed CPU/GPU pipeline                          | Stage/marker alignment and starvation diagnosis.                                                                                                 |
+| Mixed CPU/GPU pipeline                          | Stage/marker alignment and starvation evidence.                                                                                                  |
 | Long recording                                  | Memory growth, writer stability, file size, sample loss and crash recovery.                                                                      |
 | Repeated before/after comparison                | Randomized/interleaved control-vs-SIA trials, effect-size uncertainty and thermal/background-state handling.                                     |
 | Suspend/resume                                  | Clock-domain anchors detect suspend; ordinary benchmark claim is marked invalid/environment_changed.                                             |
@@ -798,6 +864,8 @@ A performance profiler with opaque overhead is not trustworthy. Every recorded s
 Performance-sensitive changes are compared with the most recent accepted benchmark on the same hardware/profile using the predeclared repeated-trial design. A statistically and practically material regression in observer cost, sampling jitter/loss, GUI responsiveness or recording throughput blocks merge unless an ADR explains the trade. A tiny difference whose uncertainty spans the equivalence region is not called a regression or speedup. Benchmark criteria are never tuned against IRIS financial outcomes.
 
 # 15. Security and permissions
+
+**Supports:** O4, O5
 
 - Default operation runs as the logged-in user; SIA MUST NOT require the whole application to run as root.
 
@@ -815,17 +883,21 @@ Performance-sensitive changes are compared with the most recent accepted benchma
 
 ## 15.1 Untrusted local inputs
 
-Marker datagrams, imported traces, session files and vendor/sysfs text are treated as untrusted input. Parsers use bounded record/attribute sizes, checked integer conversion and no panics on malformed fields. Relative paths in imports cannot escape the session directory. A malformed provider/import disables only that stream/record with an error status; it must not crash the target application.
+Marker datagrams, imported traces, session files and vendor/sysfs text are treated as untrusted input. Parsers use bounded record/attribute sizes, checked integer conversion and no panics on malformed fields. Relative paths in imports cannot escape the session directory. A malformed provider or import disables only that stream or record with an error status; it MUST NOT crash the target application.
 
 ## 15.2 Pairing, PAKE and observer-stream security
 
-SIA 0.1 observer live viewing exposes only a read-only performance stream and no remote-control API. The user-visible three-word phrase is a session-scoped PAKE password, not a bulk-encryption key or truncated public-key fingerprint. A successful standard PAKE plus key confirmation yields strong ephemeral session keys; all subsequent telemetry is authenticated and encrypted. Passive capture must not permit offline phrase testing. The phrase-space/attempt policy is derived from the registered local-LAN threat model rather than a fixed entropy number. Wrong phrases, modified handshakes or modified ciphertext fail closed.
+SIA 0.1 observer live viewing exposes only a read-only performance stream and no remote-control API. The user-visible three-word phrase is a session-scoped PAKE password, not a bulk-encryption key or truncated public-key fingerprint. A successful standard PAKE plus key confirmation yields strong ephemeral session keys; all subsequent telemetry is authenticated and encrypted. Passive capture MUST NOT permit offline phrase testing. The phrase-space/attempt policy is derived from the registered local-LAN threat model rather than a fixed entropy number. Wrong phrases, modified handshakes or modified ciphertext fail closed.
 
 Stream frames are bounded, versioned, sequence-numbered and parsed as untrusted input. Length limits, schema/version negotiation, rate limits, replay/tamper rejection and malformed-frame handling are mandatory. The phrase is never persisted in session files or ordinary logs. Process command lines and other sensitive metadata follow the configured privacy policy. There is no plaintext observer fallback in the released 0.1 product.
 
 # 16. Verification and acceptance tests
 
+**Supports:** O1, O2, O3, O4, O5
+
 Verification ownership is explicit. A test belongs to the lowest class that can decide it reliably: deterministic code tests first, AI-agent system tests where orchestration/inspection is required, and human tests only for genuinely subjective/usability/support judgments. An AI agent may run code tests, but that does not convert a deterministic test into an AI-judged test. Hardware-unavailable providers cannot be certified by simulation.
+
+A release claiming SIA 0.1 conformance MUST satisfy every applicable acceptance criterion in this section; a criterion explicitly deferred or inapplicable to unavailable optional hardware is not silently counted as passed.
 
 ## 16.1 Code-automated tests
 
@@ -866,7 +938,7 @@ Verification ownership is explicit. A test belongs to the lowest class that can 
 | Three-word PAKE pairing                | Correct phrase derives matching session keys and succeeds; wrong phrase fails closed. Phrase is never sent in cleartext or used directly as a bulk key. Standard protocol test vectors pass.                                                                                                            |
 | Pairing phrase entropy/grammar         | CSPRNG selection is uniform over the versioned adjective/adjective/noun lists; code computes phrase-space size and verifies it exceeds the security-ADR requirement derived from online-attempt policy/threat target; canonicalization is unambiguous and banned/confusable entries cannot be selected. |
 | PAKE transcript secrecy                | Published PAKE test vectors pass; test harness confirms no phrase/plaintext telemetry appears in handshake bytes and captured transcript cannot be validated by a simple offline candidate-check API.                                                                                                   |
-| Key confirmation                       | Both peers must confirm the PAKE-derived key before telemetry is accepted; transcript/role mismatch and wrong phrase fail.                                                                                                                                                                              |
+| Key confirmation                       | Both peers confirm the PAKE-derived key before telemetry is accepted; transcript/role mismatch and wrong phrase fail.                                                                                                                                                                                   |
 | AEAD tamper/replay                     | Bit changes, frame replay, sequence rollback and wrong-session keys are rejected; valid encrypted frames round-trip.                                                                                                                                                                                    |
 | Pairing attempt limit                  | Failed online pairings trigger the declared bounded-attempt/backoff policy without blocking collection/recording.                                                                                                                                                                                       |
 | Secret non-persistence                 | Pairing phrase/derived keys do not appear in session manifest, CSV/JSONL exports, normal logs or crash metadata.                                                                                                                                                                                        |
@@ -886,7 +958,7 @@ These tests require launching workloads, operating the OS/tools or visually/logi
 | Encrypted-observer effect            | Compare target-local headless capture with and without a successfully paired encrypted observer on representative CPU/GPU workloads; quantify PAKE setup and steady-state encryption/streaming observer cost.                    |
 | NVIDIA provider cross-check          | On real NVIDIA hardware, cross-check identity, VRAM, utilization, temperature, clocks and power against `nvidia-smi`/NVML semantics within timestamp tolerance.                                                                |
 | Provider sample-buffer fidelity      | On supported NVIDIA hardware, verify timestamped native samples are consumed once and fallback polling is labeled/coarser.                                                                                                       |
-| GPU starvation diagnosis fixture     | Run controlled CPU-feeder/GPU-workloads; confirm captured evidence shows the expected CPU saturation/GPU idle pattern without overstated diagnosis.                                                                              |
+| GPU starvation evidence fixture      | Run controlled CPU-feeder/GPU-workloads; confirm captured evidence shows the expected CPU saturation/GPU idle pattern without overstated causation.                                                                              |
 | Suspend/resume hardware check        | Perform or orchestrate one actual suspend/resume on the primary Linux machine and verify environment_changed/clock discontinuity behavior.                                                                                       |
 | Disk-full/crash hardware run         | Exercise real temporary-filesystem ENOSPC and process-kill cases and confirm target process survives and session prefix replays.                                                                                                 |
 | Responsive GUI agent inspection      | Run representative local/remote/replay sessions at several window sizes; inspect screenshots/interactions for clipping, dead traces and source-identity labeling.                                                                |
@@ -898,12 +970,12 @@ These tests require launching workloads, operating the OS/tools or visually/logi
 
 ## 16.3 Human-required tests
 
-These gates deliberately require human judgment or real-world support ownership. They must not be silently 'passed' by an AI agent because a screenshot looked plausible.
+These gates deliberately require human judgment or real-world support ownership. They MUST NOT be silently 'passed' by an AI agent because a screenshot looked plausible.
 
 | Test                            | Acceptance criterion                                                                                                                                                                                                                                                      |
 |---------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | Tufte/information-design review | A human information-design reviewer approves the default overview/timeline hierarchy, scales, labels, progressive disclosure and absence of chartjunk before final profiler UI implementation.                                                                            |
-| No-manual diagnosis             | Experienced engineers who did not design SIA answer the five specified diagnosis/navigation questions from representative sessions without documentation; failures are UI defects.                                                                                        |
+| No-manual determination         | Experienced engineers who did not design SIA answer the five specified determination/navigation questions from representative sessions without documentation; failures are UI defects.                                                                                    |
 | Observer-use usability          | A human on one computer types/copies the exact `sia -o <IP\[:port\]> <phrase>` command printed by a second Linux/NVIDIA target and can identify target identity, benchmark-authority status, saturation/waiting and responsible application stage without a manual. |
 | Accessibility/keyboard review   | A human verifies keyboard-only navigation, focus/selection clarity, readable scaling and color-not-sole encoding; automated checks are supporting evidence only.                                                                                                          |
 | Hardware-support certification  | A support claim for a GPU vendor/model family requires at least one real device test by a human or supervised agent plus preserved session/capability evidence. Fixture-only backends remain hardware-unverified.                                                         |
@@ -924,7 +996,9 @@ The development/test inventory available for SIA 0.1 is an Intel CPU plus NVIDIA
 
 # 17. Implementation plan and gates
 
-The phases are intentionally ordered so the profiler exists before it is trusted to optimize IRIS. No GitHub PR should implement a later phase while an earlier gate that changes measurement semantics remains unresolved.
+**Supports:** O1, O2, O3, O4, O5
+
+The phase ordering and suggested PR decomposition are implementation Guidance; the system behavior and acceptance criteria referenced by the gates remain normative where stated elsewhere. The phases are intentionally ordered so the profiler exists before it is trusted to optimize IRIS. A later phase should not be implemented while an earlier gate that changes measurement semantics remains unresolved.
 
 | Phase                                                | Scope                                                                                                                                                                                                                                                                                                                   | Exit gate                                                                                                                                                                                                                                                                                                                                       |
 |------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -969,6 +1043,8 @@ The following is a future decomposition, not authorization to create the PRs now
 
 # 18. IRIS integration contract
 
+**Supports:** O1, O2, O3, O4, O5
+
 | IRIS v21 requirement                             | SIA behavior                                                                                                                                                                                                                                                           |
 |--------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | RunId + stage/workload spans                     | Import mandatory JSONL span/events and display as application lanes; preserve attributes. Parquet adapter is optional.                                                                                                                                                 |
@@ -987,6 +1063,8 @@ The following is a future decomposition, not authorization to create the PRs now
 SIA MAY compute implementation-level throughput such as work_units/second for an application span and compare repeated sessions on the same workload/hardware identity. It MUST NOT declare an IRIS configuration financially superior. Any comparison that changes numerical precision or result status is flagged as non-equivalent rather than treated as a speedup.
 
 # 19. Decisions deliberately deferred until Phase 0/implementation evidence
+
+**Supports:** O1, O4, O5
 
 | Decision                                   | Current specification position                                                                                  | Why deferred                                                                                                          |
 |--------------------------------------------|-----------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------|
@@ -1015,7 +1093,7 @@ SIA MAY compute implementation-level throughput such as work_units/second for an
 | IRIS consumer reviewer                  | Can SIA align IRIS stages with machine state and measure CPU/GPU backend changes without becoming an IRIS dependency?                                                                                                                                                                                         |
 | Security/privacy reviewer               | Does the three-word UX use a standard PAKE rather than low-entropy keying/fingerprint truncation? Is bulk telemetry strongly authenticated/encrypted, phrase never persisted, offline guessing resisted, online guessing bounded, parser/network surface small, and Internet exposure explicitly unsupported? |
 | Tufte-style information-design reviewer | Does every plotted mark earn its place? Are time axes aligned, units honest, quantitative comparisons encoded with position/length, overlays limited, color purposeful, legends/minutiae reduced, and details progressively disclosed?                                                                        |
-| Operator HCI / no-manual reviewer       | Can an experienced engineer unfamiliar with SIA answer what is saturated, what is waiting, which process/stage caused it, whether the GPU is being used effectively, and what to inspect next without reading documentation?                                                                                  |
+| Operator HCI / no-manual reviewer       | Can an experienced engineer unfamiliar with SIA answer what is saturated, what is waiting, which process/stage coincides with it, whether the GPU is being used effectively, and what to inspect next without reading documentation?                                                                             |
 | Benchmarking/statistics reviewer        | Are observer-effect and before/after claims based on repeated interleaved experiments, effect sizes and uncertainty rather than single runs or backtest-like tuning of thresholds?                                                                                                                            |
 | Reliability/operations reviewer         | What happens on disk full, writer backlog, process exit/PID reuse, GPU reset/hotplug, suspend/resume, SIA crash and malformed/truncated sessions? Can the profiler ever harm the target?                                                                                                                      |
 | Cross-vendor semantic reviewer          | Are similar-looking percentages kept distinct when NVIDIA/AMD/DRM definitions differ? Is commonality capability-based rather than lowest-common-denominator fiction?                                                                                                                                          |
@@ -1024,13 +1102,21 @@ SIA MAY compute implementation-level throughput such as work_units/second for an
 
 ## 20.0 Review weighting
 
-Measurement science, Occam/system simplicity, Linux performance, GPU semantics and Tufte-style information design carry the greatest weight because errors there can make the profiler misleading or self-defeating. Security/reliability/cross-vendor reviewers have veto authority on unsafe or falsely portable claims. Domain specialists may request more metrics, but the Tufte/product/no-manual reviewers may remove or hide them when they do not improve diagnosis.
+Measurement science, Occam/system simplicity, Linux performance, GPU semantics and Tufte-style information design carry the greatest weight because errors there can make the profiler misleading or self-defeating. Security/reliability/cross-vendor reviewers have veto authority on unsafe or falsely portable claims. Domain specialists may request more metrics, but the Tufte/product/no-manual reviewers may remove or hide them when they do not improve the North Star determination.
 
 ## 20.1 Committee consensus
 
 Hostile pass 2 resolves the remaining implementation/security ambiguity without changing the user experience. Measurement science accepts encrypted observer streaming because authoritative recording remains local and the added path is benchmarked. Security accepts the three-word phrase only through a standard PAKE that prevents offline guessing and derives strong ephemeral AEAD keys; exact library choice is deferred to a security ADR rather than pretending an unaudited crate is approved. Occam/product reviewers delete live phrase-regeneration/account/certificate machinery and retain one observer, reconnect-with-same-session-phrase, and restart-on-compromise. Linux/network reviewers accept direct LAN observation with conservative interface discovery and explicit bind overrides. Tufte/HCI reviewers accept the normative copy/paste output and optional prompt mode. The committee is converged on the architecture and verification plan.
 
+## 20.2 Purpose and objectives adversarial review
+
+The purpose-and-objectives review accepted the North Star and five-objective hierarchy without adding a sixth objective or expanding SIA's scope. It confirmed that the engineer, not SIA, makes the final determination; SIA supplies synchronized, fit-for-purpose evidence and may characterize broad resource classes without claiming exact causation. The review also removed or downgraded over-constraints where they prescribed internal module structure, UI optimization tactics, process-lifecycle mechanisms, optional adapters or nonessential metrics rather than protecting an objective. Genuine conflicts were resolved by requiring honest clock-alignment quality, making unverified AMD capability support conditional, and replacing causal wording with correlation wording. No new product feature was introduced merely to populate the hierarchy.
+
 # 21. SIA 0.1 IRIS-ready acceptance criteria
+
+**Supports:** O1, O2, O3, O4, O5
+
+A release claiming the SIA 0.1 IRIS-ready milestone MUST satisfy every applicable criterion below. Optional or hardware-unavailable provider work is governed by the explicit verification boundaries in Section 16.4.
 
 - True headless recording (no GUI/graphics device), offline replay, explicit session terminal state and transparent CSV/JSONL export work on the primary Linux/NVIDIA machine.
 
@@ -1060,7 +1146,7 @@ Hostile pass 2 resolves the remaining implementation/security ambiguity without 
 
 - Profiler timeline uses synchronized shared time axes, progressive disclosure and interval statistics with visible coverage/clock quality; selecting an IRIS/application span exposes CPU/GPU/memory/I/O/throttle evidence without mixed-unit/dual-axis distortion.
 
-- The IRIS-ready gate does not depend on automatic bottleneck diagnoses; disabling diagnostics still leaves all authoritative capture, replay and evidence-inspection capability.
+- The IRIS-ready gate does not depend on automatic bottleneck indications; disabling diagnostics still leaves all authoritative capture, replay and evidence-inspection capability.
 
 - Session crash/disk-full/provider-reset recovery, explicit degraded terminal states, bounded input handling and dropped-sample/backlog accounting pass.
 
@@ -1068,7 +1154,7 @@ Hostile pass 2 resolves the remaining implementation/security ambiguity without 
 
 - No requirement for IRIS code to link a SIA library or keep SIA running in production.
 
-- The release report separates code-automated, AI-agent-executable and human-required gates; none of the human information-design/no-manual/support gates may be self-certified by an AI agent.
+- The release report separates code-automated, AI-agent-executable and human-required gates; human information-design, no-manual and support gates MUST NOT be self-certified by an AI agent.
 
 - Intel-CPU/NVIDIA-GPU is the primary hardware-certified platform for 0.1. AMD/Intel-GPU provider code, if present without real-device testing, is explicitly labeled hardware-unverified/experimental and does not block IRIS readiness.
 
@@ -1198,7 +1284,7 @@ mono_ns,window_start_mono_ns,entity_id,gpu_util_pct,memory_activity_pct,vram_use
 | ADR-SIA-005 | Buffered CSV/JSONL session store first                                                                | Meets transparency/export needs with low complexity; optimize only after evidence.                                                                                   |
 | ADR-SIA-006 | Offline IRIS trace import is the primary integration                                                  | Preserves IRIS independence and cannot perturb/block production.                                                                                                     |
 | ADR-SIA-007 | Optional Unix datagram markers                                                                        | Low overhead/nonblocking generic live annotations; loss is detectable.                                                                                               |
-| ADR-SIA-008 | No Nsight/perf reimplementation                                                                       | SIA diagnoses whole-system bottleneck class; deep tools diagnose kernels/instructions.                                                                               |
+| ADR-SIA-008 | No Nsight/perf reimplementation                                                                       | SIA characterizes whole-system bottleneck classes; deep tools determine kernel/instruction-level causes.                                                             |
 | ADR-SIA-009 | Transparent diagnostics, no composite score                                                           | Evidence is inspectable; avoids false precision and opaque heuristics.                                                                                               |
 | ADR-SIA-010 | Explicit clock domains + synchronization anchors                                                      | A monotonic number without its clock identity is not enough to align independent traces.                                                                             |
 | ADR-SIA-011 | Wide append-only collector streams; long-form export                                                  | Reduces recorder volume/observer effect while retaining transparent files and easy analysis.                                                                         |
