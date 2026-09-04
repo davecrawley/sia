@@ -1,0 +1,254 @@
+schema_version: 1
+status: proposed
+artifact_kind: observer-effect-preregistration-and-baseline
+specification:
+  path: spec/SPECIFICATION.md
+  sha: 4479bcc19db72f6ad243a87e4b7271496d60d0b7
+  requirements: [R01, R12, R38, R40]
+adr:
+  path: docs/adr/0001-observer-effect-benchmark.md
+  revision: null
+claim:
+  scope: null
+  hardware_class: null
+  evidence_class: unexecuted
+  low_observer_effect_claimed: false
+
+analysis:
+  unit: independent_matched_pair
+  alpha_familywise: 0.05
+  interval_method: paired_percentile_bootstrap_with_bonferroni
+  bootstrap_replicates: 100000
+  bootstrap_seed: 1397311749
+  resampling_unit: whole_pair_within_workload
+  pilot_pairs_per_workload: 12
+  pilot_in_final_analysis: false
+  minimum_final_pairs_per_workload: 30
+  maximum_attempted_pairs_per_workload: 200
+  precision_half_width_fraction_of_margin: 0.3333333333333333
+  optional_stopping: prohibited
+  equivalence_rule: complete_adjusted_interval_strictly_inside_both_margin_bounds
+  overall_rule: all_required_workload_endpoint_results_must_pass
+  multiplicity_K: null
+  adjusted_confidence_level: null
+  quantile_indices: null
+
+workloads:
+  cpu_fixed:
+    required: true
+    seed: 1397311745
+    concurrency: 1
+    warmup_seconds: 30
+    cooldown_seconds: 120
+    definition: sha256_1GiB_deterministic_stream_32_passes
+    fixed_work_multiplier_from_pilot: null
+    input_digest: null
+  io_fixed:
+    required: true
+    seed: 1397311746
+    concurrency: 1
+    warmup_seconds: 30
+    cooldown_seconds: 120
+    definition: direct_sequential_read_16GiB_1MiB_qd1_four_passes
+    fixed_work_multiplier_from_pilot: null
+    input_digest: null
+  gpu_fixed:
+    required: true
+    seed: 1397311747
+    concurrency: 1
+    warmup_seconds: 30
+    cooldown_seconds: 120
+    definition: fp32_matmul_4096x4096_10000_iterations_batch1
+    input_digest: null
+  gui_active:
+    required: true
+    seed: 1397311748
+    concurrency: 1
+    duration_seconds: 120
+    warmup_seconds: 30
+    cooldown_seconds: 120
+    definition: offscreen_1920x1080_10000_sprites_uncapped_with_sia_gui_visible
+    input_digest: null
+
+endpoint_contract:
+  core_required_for: [cpu_fixed, io_fixed, gpu_fixed, gui_active]
+  accelerator_required_for: [gpu_fixed, gui_active]
+  gui_required_for: [gui_active]
+  endpoints:
+    target_elapsed_ns: {class: core, unit: ns, effect: log_ratio, aggregation: geometric_mean_ratio, margin_lower: -0.02955880224154443, margin_upper: 0.02955880224154443}
+    target_throughput_units_per_s: {class: core, unit: workload_units_per_s, effect: log_ratio, aggregation: geometric_mean_ratio, margin_lower: -0.02955880224154443, margin_upper: 0.02955880224154443}
+    sia_cpu_time_ns: {class: core, unit: ns, result_unit: percentage_points_of_one_core, effect: normalized_difference, aggregation: arithmetic_mean, margin_lower: -2, margin_upper: 2}
+    sia_peak_rss_bytes: {class: core, unit: bytes, effect: difference, aggregation: arithmetic_mean, margin_lower: -134217728, margin_upper: 134217728}
+    sia_io_read_bytes: {class: core, unit: bytes, effect: difference, aggregation: arithmetic_mean, margin_lower: -16777216, margin_upper: 16777216}
+    sia_io_write_bytes: {class: core, unit: bytes, effect: difference, aggregation: arithmetic_mean, margin_lower: -16777216, margin_upper: 16777216}
+    target_gpu_clock_hz: {class: accelerator, unit: Hz, effect: log_ratio, aggregation: time_weighted_geometric_mean_ratio, margin_lower: -0.02955880224154443, margin_upper: 0.02955880224154443}
+    target_gpu_power_w: {class: accelerator, unit: W, effect: log_ratio, aggregation: time_weighted_geometric_mean_ratio, margin_lower: -0.048790164169432, margin_upper: 0.048790164169432}
+    target_gpu_temperature_c: {class: accelerator, unit: degrees_C, effect: difference, aggregation: arithmetic_mean_of_arm_maxima, margin_lower: -3, margin_upper: 3}
+    sia_gpu_busy_pct: {class: gui, unit: percentage_points, effect: difference, aggregation: time_weighted_arithmetic_mean, margin_lower: -2, margin_upper: 2}
+
+provenance:
+  source_revision: null
+  adr_revision: null
+  baseline_revision: null
+  observer_mode_enabled: null
+  observer_mode_disabled: null
+  observer_configuration: null
+  host_os: null
+  kernel: null
+  cpu_model: null
+  cpu_count: null
+  memory_bytes: null
+  storage_model: null
+  storage_firmware: null
+  accelerator_model: null
+  accelerator_driver: null
+  accelerator_runtime: null
+  firmware: null
+  cpu_affinity: null
+  cpu_governor: null
+  cpu_frequency_policy: null
+  accelerator_frequency_policy: null
+  accelerator_power_limit_w: null
+  display_configuration: null
+  ambient_controls: null
+  environment_variables: null
+  workload_tool_versions: null
+  measurement_tool_versions: null
+  analysis_tool_version: null
+  external_harness_version: null
+  external_harness_overhead_calibration: null
+  monotonic_clock: null
+  accelerator_clock_sync_method: null
+  sampling_period_ns: null
+  raw_observation_reference: null
+  raw_observation_digest: null
+
+schedule:
+  randomization_seed: 1397311749
+  method: balanced_blocks_of_four_two_enabled_first_two_disabled_first
+  generated_before_outcome_inspection: false
+  pairs: []
+
+trial_record_schema:
+  required_fields:
+    - workload
+    - pair_id
+    - arm
+    - order
+    - period
+    - attempted_at
+    - monotonic_start_ns
+    - monotonic_end_ns
+    - inclusion_status
+    - reason_code
+    - observed_values
+    - observed_units
+    - expected_sample_count
+    - received_sample_count
+    - sample_loss_count
+    - sample_loss_rate
+    - collector_lateness_p50_ns
+    - collector_lateness_p95_ns
+    - collector_lateness_p99_ns
+    - collector_lateness_max_ns
+    - collector_error_count
+    - source_sequence_first
+    - source_sequence_last
+    - clock_regression
+    - warmup_complete
+    - cache_policy_honored
+    - cpu_temperature_c
+    - gpu_temperature_c
+    - throttling_flags
+    - background_cpu_pct
+    - background_storage_busy_pct
+    - export_complete
+    - teardown_complete
+  gui_additional_required_fields: [sia_gpu_busy_pct]
+  arm_values: [disabled, enabled]
+  inclusion_values: [included, excluded, failed, timed_out, missing, censored]
+  reason_codes:
+    - none
+    - process_failure
+    - timeout
+    - missing_required_telemetry
+    - sample_loss_limit
+    - collector_lateness_limit
+    - collector_error
+    - clock_regression
+    - invalid_synchronization
+    - warmup_failure
+    - cache_policy_failure
+    - thermal_or_power_throttling
+    - frequency_policy_change
+    - background_interference
+    - carryover
+    - incomplete_export
+    - incomplete_teardown
+
+trials: []
+
+attempt_accounting:
+  cpu_fixed: {attempted_pairs: 0, included_pairs: 0, excluded_pairs: 0, failed_arms: 0, timed_out_arms: 0, missing_arms: 0, censored_arms: 0, status: inconclusive}
+  io_fixed: {attempted_pairs: 0, included_pairs: 0, excluded_pairs: 0, failed_arms: 0, timed_out_arms: 0, missing_arms: 0, censored_arms: 0, status: inconclusive}
+  gpu_fixed: {attempted_pairs: 0, included_pairs: 0, excluded_pairs: 0, failed_arms: 0, timed_out_arms: 0, missing_arms: 0, censored_arms: 0, status: inconclusive}
+  gui_active: {attempted_pairs: 0, included_pairs: 0, excluded_pairs: 0, failed_arms: 0, timed_out_arms: 0, missing_arms: 0, censored_arms: 0, status: inconclusive}
+
+result_field_schema: &pending
+  estimate: null
+  adjusted_interval_lower: null
+  adjusted_interval_upper: null
+  adjusted_confidence_level: null
+  margin_lower: null
+  margin_upper: null
+  sample_count: 0
+  attempted_pair_count: 0
+  exclusion_count: 0
+  status: inconclusive
+  reason: unexecuted
+
+results:
+  cpu_fixed:
+    target_elapsed_ns: {<<: *pending, margin_lower: -0.02955880224154443, margin_upper: 0.02955880224154443}
+    target_throughput_units_per_s: {<<: *pending, margin_lower: -0.02955880224154443, margin_upper: 0.02955880224154443}
+    sia_cpu_time_ns: {<<: *pending, margin_lower: -2, margin_upper: 2}
+    sia_peak_rss_bytes: {<<: *pending, margin_lower: -134217728, margin_upper: 134217728}
+    sia_io_read_bytes: {<<: *pending, margin_lower: -16777216, margin_upper: 16777216}
+    sia_io_write_bytes: {<<: *pending, margin_lower: -16777216, margin_upper: 16777216}
+  io_fixed:
+    target_elapsed_ns: {<<: *pending, margin_lower: -0.02955880224154443, margin_upper: 0.02955880224154443}
+    target_throughput_units_per_s: {<<: *pending, margin_lower: -0.02955880224154443, margin_upper: 0.02955880224154443}
+    sia_cpu_time_ns: {<<: *pending, margin_lower: -2, margin_upper: 2}
+    sia_peak_rss_bytes: {<<: *pending, margin_lower: -134217728, margin_upper: 134217728}
+    sia_io_read_bytes: {<<: *pending, margin_lower: -16777216, margin_upper: 16777216}
+    sia_io_write_bytes: {<<: *pending, margin_lower: -16777216, margin_upper: 16777216}
+  gpu_fixed:
+    target_elapsed_ns: {<<: *pending, margin_lower: -0.02955880224154443, margin_upper: 0.02955880224154443}
+    target_throughput_units_per_s: {<<: *pending, margin_lower: -0.02955880224154443, margin_upper: 0.02955880224154443}
+    sia_cpu_time_ns: {<<: *pending, margin_lower: -2, margin_upper: 2}
+    sia_peak_rss_bytes: {<<: *pending, margin_lower: -134217728, margin_upper: 134217728}
+    sia_io_read_bytes: {<<: *pending, margin_lower: -16777216, margin_upper: 16777216}
+    sia_io_write_bytes: {<<: *pending, margin_lower: -16777216, margin_upper: 16777216}
+    target_gpu_clock_hz: {<<: *pending, margin_lower: -0.02955880224154443, margin_upper: 0.02955880224154443}
+    target_gpu_power_w: {<<: *pending, margin_lower: -0.048790164169432, margin_upper: 0.048790164169432}
+    target_gpu_temperature_c: {<<: *pending, margin_lower: -3, margin_upper: 3}
+  gui_active:
+    target_elapsed_ns: {<<: *pending, margin_lower: -0.02955880224154443, margin_upper: 0.02955880224154443}
+    target_throughput_units_per_s: {<<: *pending, margin_lower: -0.02955880224154443, margin_upper: 0.02955880224154443}
+    sia_cpu_time_ns: {<<: *pending, margin_lower: -2, margin_upper: 2}
+    sia_peak_rss_bytes: {<<: *pending, margin_lower: -134217728, margin_upper: 134217728}
+    sia_io_read_bytes: {<<: *pending, margin_lower: -16777216, margin_upper: 16777216}
+    sia_io_write_bytes: {<<: *pending, margin_lower: -16777216, margin_upper: 16777216}
+    target_gpu_clock_hz: {<<: *pending, margin_lower: -0.02955880224154443, margin_upper: 0.02955880224154443}
+    target_gpu_power_w: {<<: *pending, margin_lower: -0.048790164169432, margin_upper: 0.048790164169432}
+    target_gpu_temperature_c: {<<: *pending, margin_lower: -3, margin_upper: 3}
+    sia_gpu_busy_pct: {<<: *pending, margin_lower: -2, margin_upper: 2}
+
+overall_conclusion:
+  status: inconclusive
+  required_result_count: 30
+  passed_result_count: 0
+  failed_result_count: 0
+  inconclusive_result_count: 30
+  reason: preregistered_schema_only_no_measurements
+  low_observer_effect_claimed: false
