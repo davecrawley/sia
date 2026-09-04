@@ -3,92 +3,109 @@
 - Status: Proposed
 - Specification revision: `4479bcc19db72f6ad243a87e4b7271496d60d0b7`
 - Requirements: R01, R12, R38, R40
-- Baseline artifact: `benchmarks/observer-effect-baseline.json`
+- Machine-readable baseline: `benchmarks/observer-effect/baseline.json`
 
 ## Decision
 
-Low observer effect is a statistical equivalence claim made only from paired runs on the declared target hardware. An observer-disabled arm and an observer-enabled arm use the same SIA revision, workload, input, seed, host, configuration, and measurement boundary. They differ only in whether the observation mechanism under evaluation collects, buffers, exports, and tears down its data.
+Low observer effect is a statistical equivalence claim. It is established only by the preregistered paired experiment below, performed on the declared target hardware, with complete raw observations and all required conclusions passing. This proposed ADR and its unexecuted baseline do not themselves establish low observer effect.
 
-This proposed ADR and its empty baseline are a preregistration, not evidence. They do not establish low observer effect. A claim is permitted only after the fixed procedure below has run on the declared target and every required result and quality gate passes.
+The observer effect for a pair is the difference between otherwise identical observer-enabled (`E`) and observer-disabled (`D`) runs. Additive endpoints use `E-D`. Strictly positive scale endpoints use `log(E/D)` and are reported as `E/D`. One independent, matched enabled/disabled pair is the unit of analysis. Repeated samples within a trial are reduced to the endpoint aggregation declared below and are not independent observations.
 
-## Unit of analysis and effects
+An overall pass is permitted only if every required workload-endpoint result is `pass` and every measurement-quality gate passes. A failed, missing, invalid, or inconclusive result prevents an overall pass. Conflicting results must be reported individually and may not be selectively summarized.
 
-The independent unit is a completed pair containing one disabled and one enabled arm. Hosts or processes reused within a pair do not create additional independent observations.
+## Traceability
 
-For strictly positive performance endpoints, the pair effect is `log(enabled / disabled)`. Results are reported after exponentiation as an enabled/disabled ratio. For additive resource, accelerator, and quality endpoints, the pair effect is `enabled - disabled` in the endpoint's stated unit. All equivalence margins are directionally symmetric: log-ratio limits are `[-log(M), +log(M)]`, reported as `[1/M, M]`; difference limits are `[-D, +D]`.
+| Requirement | Contract provision |
+|---|---|
+| R01 | External paired measurements, fixed boundaries, equivalence margins, and an all-endpoints pass rule make low observer effect falsifiable. |
+| R12 | Observer CPU time, RSS, I/O, sample loss, collector lateness, and configuration are recorded for every trial. |
+| R38 | Target GPU clock, power, and temperature are required endpoints; GUI trials additionally require SIA GPU-activity evidence. |
+| R40 | Raw paired evidence, provenance, uncertainty, exclusions, and deterministic conclusions are retained in the baseline artifact. |
 
-The baseline artifact fixes the required workloads, endpoints, units, arm aggregation, effect type, margin, and rationale. Each margin represents the largest change considered operationally negligible for the benchmark's stated scope. A favorable direction receives no larger allowance than an unfavorable direction.
+## Frozen workloads
 
-## Required workloads
+The harness exposes the following immutable workload IDs. Its workload manifest, implementation revision, command vector, input hashes, and tool versions must be copied into the baseline before the first pilot. Changing any of them starts a new campaign and baseline revision.
 
-The suite contains four fixed workloads:
+| Workload | Fixed execution |
+|---|---|
+| `fixed_job` | One deterministic target job using seed `104729`, concurrency 1, a 60 s untimed warm-up, then one complete timed job. Elapsed time is measured from target release until completion; throughput is completed canonical work units divided by that interval. |
+| `sustained_throughput` | Deterministic input stream using seed `130363`, concurrency equal to the declared target production concurrency, 60 s untimed warm-up, then 600 s measurement. The exact admitted input sequence is replayed in both arms. |
+| `gui_active` | The declared target GUI application, deterministic interaction replay `gui-replay-v1` using seed `155921`, concurrency 1, 60 s untimed warm-up, then 600 s measurement. The window size, display refresh, compositor, and replay event times are fixed and recorded. |
 
-1. `cpu_fixed`: one-thread sysbench CPU work, prime limit 20000, deterministic seed 104729, 60 seconds warm-up and 180 seconds measured duration.
-2. `io_fixed`: one-job fio mixed sequential read/write workload on an isolated 8 GiB file, 1 MiB blocks, synchronous direct I/O, deterministic seed 104729, 60 seconds warm-up and 180 seconds measured duration.
-3. `gpu_offscreen_fixed`: off-screen glmark2 at 1920x1080 using the listed scenes in the listed order, 60 seconds warm-up and 180 seconds measured duration.
-4. `gui_active_fixed`: on-screen glmark2 at 1920x1080 using the same fixed scene sequence, with the SIA GUI visible and unchanged throughout, 60 seconds warm-up and 180 seconds measured duration.
+A campaign is not executable until the baseline contains losslessly reproducible workload-manifest references and concrete input identities. Synthetic workloads may support development but cannot replace any workload above for a target claim.
 
-Executable paths, exact tool versions, resolved arguments, input identities, and hashes are mandatory provenance fields. A different tool, scene, input, concurrency, resolution, duration, or seed is a different benchmark and requires a new proposed ADR revision before collection. These controls characterize the declared suite only. A target-production claim additionally requires a target-representative nonsynthetic workload preregistered by ADR amendment; synthetic-only evidence may not be generalized to production workloads.
+## Required endpoints and margins
 
-## Endpoints and aggregation
+Every endpoint below is required for every workload. Ratios use a directionally symmetric margin on the log scale. Additive margins are symmetric about zero. The same margins apply to all three workloads; therefore the family contains 27 required workload-endpoint conclusions.
 
-The external harness is authoritative for elapsed time, throughput, process CPU time, RSS, process I/O, accelerator telemetry, and measurement boundaries. Raw samples and per-arm aggregates are retained.
+| Endpoint | Trial value and unit | Effect | Equivalence margin | Practical rationale |
+|---|---|---|---|---|
+| `target_elapsed_time` | External monotonic elapsed time, ms | `E/D` | `[1/1.03, 1.03]` | A change exceeding about 3% is operationally noticeable for fixed work. |
+| `target_throughput` | Completed canonical work units/s | `E/D` | `[1/1.03, 1.03]` | A change exceeding about 3% materially changes capacity. |
+| `sia_cpu_time` | SIA process CPU ms per measured wall-second | `E-D` | `[-0.50, 0.50]` | More than 0.5 ms/s is over 0.05 of one CPU core. |
+| `sia_rss` | Maximum SIA resident set size, MiB | `E-D` | `[-32, 32]` | A 32 MiB shift is the largest accepted memory-budget change. |
+| `sia_io` | SIA read plus write throughput, KiB/s | `E-D` | `[-64, 64]` | Sustained I/O above 64 KiB/s can affect constrained systems. |
+| `target_gpu_clock` | Time-weighted mean target GPU core clock, MHz | `E/D` | `[1/1.03, 1.03]` | A 3% clock displacement may indicate altered accelerator scheduling or throttling. |
+| `target_gpu_power` | Time-weighted mean target GPU board power, W | `E/D` | `[1/1.05, 1.05]` | A 5% power displacement is practically material. |
+| `target_gpu_temperature` | Maximum target GPU temperature, °C | `E-D` | `[-2, 2]` | A 2 °C displacement can affect fan or throttle policy. |
+| `target_gpu_activity` | Time-weighted mean target GPU busy time, percent | `E-D` | `[-1, 1]` percentage points | A one-point activity displacement is the accepted scheduling-noise budget. |
 
-The primary workload endpoint is throughput for the time-based CPU, I/O, and graphics workloads. Throughput is total completed work divided by the 180-second measurement window. SIA CPU time is user plus system CPU milliseconds divided by measured target seconds. RSS is the time-weighted mean MiB from external process-tree samples. I/O is the process-tree byte-counter delta divided by measured target seconds. GPU clock, board power, temperature, and utilization are time-weighted means over timestamped external samples. Sample loss is missing sequence numbers divided by expected sequence numbers. Collector lateness is the empirical p99 of `collector_receive_monotonic_ns - scheduled_monotonic_ns`.
+For ratio endpoints, equivalence means the entire adjusted interval for `log(E/D)` lies strictly inside `[-log(U), log(U)]`, where `U` is the upper margin. Reported ratio limits are exponentiated. For additive endpoints, the entire adjusted interval must lie strictly inside `[-Δ, Δ]`.
 
-Every trial records sample-loss count, expected-sample count, sample-loss rate, collector-lateness samples and p99. Every GUI-active trial also records SIA process-tree GPU utilization. Missing measurement-quality fields make every affected workload-endpoint conclusion inconclusive. Accelerator endpoints are required for both GPU workloads. The artifact's applicability matrix is exhaustive; an endpoint cannot be dropped after outcomes are seen.
-
-Overall low observer effect passes only if every required workload-endpoint result passes. A failed, missing, invalid, or inconclusive result prevents an overall pass. Conflicting endpoints must be reported together and cannot be selectively summarized.
-
-## Equivalence and uncertainty
-
-Let `K` be the number of required workload-endpoint conclusions in the frozen applicability matrix. For each conclusion, compute the mean of its independent pair effects and a two-sided paired Student-t confidence interval with confidence `1 - 0.05/K`, using critical value `t(1 - 0.05/(2K), n-1)`. Bonferroni therefore supplies at least 95% family-wise coverage across all required conclusions without relying on endpoint independence. Log-ratio intervals are exponentiated for reporting.
-
-The paired-t procedure assumes independent pairs and a finite-variance, approximately normal distribution of pair effects. Raw effects, a Q-Q diagnostic, and skewness are reported. Absolute skewness above 2 or a visually material Q-Q departure recorded by the predeclared automated diagnostic invalidates that conclusion; it is inconclusive and requires a new preregistered robust design, not a post-hoc method change.
-
-Equivalence is established only if the complete adjusted confidence interval lies strictly inside both symmetric margin limits and all data-quality gates pass. Touching or overlapping a margin, failure to reject a difference test, an unadjusted interval, or a favorable point estimate is insufficient.
-
-## Repetition and stopping
-
-A separate pilot of 12 independent pairs per workload estimates the standard deviation `s` for each required pair effect. Pilot observations never enter confirmatory analysis. For each endpoint, calculate
-
-`n = ceil(((z(1-0.05/(2K)) + z(0.90)) * s / (margin/2))^2)`.
-
-For log-ratio endpoints the margin in this formula is `log(M)`. The workload's confirmatory count is the maximum endpoint-specific `n`, bounded below by 30 pairs and above by 200 pairs. The numerical precision target is an adjusted 95%-family-wise half-width no greater than half the equivalence margin, with 90% planning power at that target. If the formula exceeds 200, collection does not begin and the result is inconclusive for insufficient attainable precision. If the realized adjusted half-width exceeds the target at the fixed count, the result is inconclusive; no extra pairs are added. There is no outcome-dependent stopping, peeking, sample-size revision, or reuse of pilot data.
+Margin overlap, failure to reject a difference test, or a favorable point estimate is insufficient. Equality with a margin boundary is not a pass.
 
 ## Pairing, order, and environmental control
 
-Each pair uses matched workload inputs, seeds, concurrency, duration, host image, boot, power settings, frequency settings, and observer configuration. Pair order is assigned before collection by sorting `SHA-256(experiment_id || workload_id || pair_id)` on its low bit: zero is disabled-first and one is enabled-first. Equal allocation is enforced within each workload by deterministically flipping the final excess assignments. Analysis includes the within-pair effect and reports order and period strata.
+Each pair uses the same host, boot image, target revision, workload manifest, input sequence, seed, concurrency, duration, power policy, frequency policy, environment, and measurement tooling. The arms differ only in whether the SIA observation mechanism under evaluation is disabled or enabled. Disabled mode keeps non-observation setup common to both arms.
 
-Before each arm, the harness restores the workload fixture, clears only the benchmark-owned cache when the workload definition requires it, waits for the fixed 60-second thermal idle condition, performs the fixed warm-up, and verifies isolation. Cache state is never changed between arms selectively. The host is dedicated: no interactive users, scheduled jobs, updates, unrelated containers, or dynamic power policy.
+Pair order is balanced within each workload. For even pair IDs, order is generated by a deterministic permutation using campaign seed `8675309`; each adjacent pair of pair IDs contains one `DE` and one `ED` order. Workloads are run in deterministic randomized blocks. No pair may contain simultaneous arms.
 
-The harness records arm order, period, cache-reset result, warm-up result, ambient and device temperatures, clock and power states, throttling flags, background CPU/I/O, and carryover probes. A pair is invalidated by a failed reset; warm-up deviation over one second; thermal baseline difference over 2 degrees C; any throttling; background CPU above 2% for more than five seconds; unrelated I/O above 10 MiB/s for more than five seconds; workload/input mismatch; or carryover probe differing by more than 3% between pre-arm checks. Criteria are evaluated from arm-blind infrastructure fields. Invalidated attempts remain in the raw ledger and are replaced using the same preassigned order until the fixed valid-pair count or attempt ceiling of twice that count is reached. Reaching the ceiling is inconclusive.
+Before every arm, the harness performs the declared 60 s workload warm-up and waits until GPU temperature is within 2 °C of that pair's first-arm starting temperature. A maximum 15-minute cooldown is allowed. Failure to reach that range invalidates the complete pair. Cache state must be made equivalent by the workload's declared cache-reset procedure; if no valid reset exists, cache state is measured and pair order is included as a fixed effect in a sensitivity analysis.
 
-Order or period interaction is tested at family-wise alpha 0.05/K. An interaction estimate larger than half the equivalence margin, a significant interaction, or an imbalance after invalidation makes the conclusion inconclusive. No post-hoc stratification rescues a failed conclusion.
+The baseline records order, period, warm-up, start temperature, clock policy, throttle flags, load average, and background-process interference. A pair is invalidated if an arm reports thermal or power throttling, collector clock discontinuity, host sleep, workload/input mismatch, an undeclared background task consuming more than 2% CPU for over 5 s, or a measurement-tool failure. The complete pair is excluded; exclusions are decided from preregistered diagnostics without comparing arm outcomes.
 
-## Failures, timeouts, missingness, and anomalies
+Order, period, and carryover are tested after collection by fitting the endpoint effect to preregistered order and period indicators and by comparing the two order strata. A Holm-adjusted diagnostic p-value below 0.05 or an order-stratum estimate difference larger than one-half of the endpoint margin makes that endpoint inconclusive; it does not authorize removal of observations. Cache, thermal, or carryover evidence that violates the controls above invalidates the affected pair. If more than 10% of attempted pairs for a workload are invalid, every result for that workload is inconclusive.
 
-Every attempted arm receives a ledger row. Timeout is fixed at measured duration plus 30 seconds. Crashes, timeouts, absent endpoints, corrupt timestamps, failed synchronization, censoring, or unmatched arms invalidate the pair and are reported with an objective reason code. Numerical outliers are retained. Exclusion is allowed only for the predeclared infrastructure criteria above and is decided without inspecting enabled-versus-disabled endpoint outcomes. Counts of attempts, valid pairs, exclusions, failures, timeouts, missing values, and censored values are reported for every result.
+## Repetitions and stopping
 
-Any arm failure-rate difference greater than 2 percentage points or any missingness associated with arm, order, or endpoint makes the affected result inconclusive. Censored values are not imputed.
+A separate 20-pair pilot is run for every workload. Pilot pairs never enter the final analysis. For each required workload-endpoint combination, calculate the standard deviation `s` of paired log effects or paired additive effects. Let `Δ` be the corresponding log or additive margin, `m=27`, family alpha `0.05`, and desired power `0.90`. The final independent-pair count is:
 
-## Measurement boundary and harness cost
+`n = max(30, max over required endpoints ceil(((z(1-0.05/(2m)) + z(0.90)) * s / Δ)^2))`.
 
-Setup ends only after isolation checks and warm-up. The arm begins immediately before the target is released from a synchronization barrier. CPU and accelerator work is synchronized at both boundaries; GPU queues are fenced before the end timestamp. The enabled arm continues through buffer drain, export flush, and observer teardown until the observer and its children exit and external counters are read. Deferred observer work is never omitted or moved outside the enabled arm.
+The workload receives the maximum `n` required by its endpoints. If this exceeds 200, register 200 final pairs and classify any endpoint whose adjusted interval does not establish equivalence as inconclusive or failed as applicable. No final data are inspected before `n` is frozen. There is no early stopping, sample-size re-estimation, or optional continuation. Replacement of invalid pairs is allowed only until the frozen number of valid pairs is reached or 200 pairs have been attempted, whichever occurs first. This rule controls optional stopping by fixing sample size from disjoint pilot data.
 
-Before pilot collection, the external harness runs 20 harness-only calibration repetitions in each mode. Its median timing cost must be below 10% of the smallest time margin, sampling CPU below 10% of the SIA CPU margin, and sampling I/O below 10% of the I/O margin. Calibration, clock source, resolution, synchronization error, sample cadence, buffering behavior, and tool versions are retained. Failure is inconclusive until the harness is improved and this ADR is revised.
+## Uncertainty and multiplicity
 
-## Provenance and claim scope
+For every endpoint, construct a two-sided BCa paired-bootstrap interval by resampling whole independent pairs within workload. Use 200,000 resamples and deterministic seed `8675309 + endpoint_ordinal + 1000 * workload_ordinal`. The resampling unit is the complete pair; samples within a trial are never resampled as independent observations. BCa assumes independent pairs and exchangeability within the fixed workload and environment.
 
-The dataset records source and ADR revisions, observer mode and configuration hash, host OS and kernel, CPU, memory, accelerator, driver and runtime versions, firmware, power and frequency settings, environment controls, workload/input identity, tool versions, timestamps, and clock source. Required provenance may not be null in an executed dataset.
+Each interval has confidence `1-0.05/27 = 0.9981481481` (99.81481481%). Bonferroni coverage therefore provides at least 95% family-wise coverage across all 27 required equivalence conclusions. If BCa cannot be computed, its assumptions fail, or fewer than the frozen valid-pair count are available, the result is inconclusive. Sensitivity diagnostics never replace the preregistered primary interval.
 
-Development-host evidence is labeled development-only. Target-hardware evidence requires exact declared target identity. Unmatched hosts, uncalibrated estimates, incomplete endpoints, incomplete quality fields, synthetic-only workloads, or nonreproducible summaries cannot support a target low-observer-effect claim.
+## Measurement boundaries and authority
 
-## Requirement traceability
+The external benchmark harness is authoritative for elapsed time and throughput. It starts timing immediately before releasing the target workload and stops only after the workload completes, SIA flushes buffered samples, exports data, synchronizes accelerator work, and finishes observer teardown. Deferred enabled-arm work may not be moved outside this boundary.
 
-| Requirement | Contract decision |
-| --- | --- |
-| R01 | Paired enabled/disabled effects, fixed symmetric margins, exhaustive equivalence gate |
-| R12 | External authoritative timing, complete resource and accelerator endpoints, deferred-work boundary |
-| R38 | Raw pair ledger, measurement-quality evidence, provenance, deterministic conclusions |
-| R40 | Proposed ADR and baseline; no claim until target execution satisfies every gate |
+The harness records its own CPU, RSS, I/O, timing-call overhead, and sampling cost in both arms. A no-target calibration is run with the same sampling schedule. Calibration is reported separately and is never subtracted unless a future ADR amendment preregisters that method before data collection.
+
+GPU timing uses explicit device synchronization at both boundaries. Device timestamps are mapped to the external monotonic clock, and maximum synchronization residual is recorded. A residual over 1 ms invalidates the pair. Buffered samples are assigned by monotonic timestamps; late arrival does not move work outside the enabled arm.
+
+## Measurement-quality gates
+
+Every attempted trial records expected, received, lost, and late sample counts; sample-loss rate; collector-lateness maximum and p99; clock synchronization residual; and measurement completeness. Every `gui_active` trial also records SIA GPU-activity sample count, mean, and maximum.
+
+A trial fails quality control if sample loss exceeds 0.1%, collector lateness p99 exceeds one configured sampling interval, any required count is missing, or any required field is non-finite. A GUI trial also fails if SIA GPU-activity evidence is missing. Missing quality fields make every affected workload-endpoint result inconclusive and prevent an overall pass.
+
+## Failures, missing data, and anomalies
+
+Every attempted arm and pair remains in the baseline. Timeout is fixed at 120% of the workload's pilot p99 duration, rounded up to the next second before final collection. A crash, timeout, missing arm, censored value, non-finite value, or preregistered invalidation excludes the complete pair and is counted by reason. It is never imputed.
+
+Values are not excluded merely because they are extreme. The only anomaly exclusions are impossible clock order, corrupt input identity, measurement-tool failure, or the environmental invalidations declared above. Decisions are made without viewing enabled-versus-disabled outcomes. Analysis includes all valid complete pairs.
+
+A workload endpoint is `fail` when its complete adjusted interval is finite and lies wholly outside either margin boundary in the adverse direction. It is `pass` only when wholly inside both boundaries. All other cases, including margin crossing, insufficient pairs, missing fields, and mixed evidence, are `inconclusive`.
+
+## Provenance and claim boundary
+
+The baseline records source and ADR revisions, complete configuration, observer mode, host identity, OS, kernel, CPU, memory, accelerator and driver/runtime versions, firmware, power and frequency settings, isolation controls, workload/input identity, environment, and measurement-tool versions.
+
+Development-host evidence must be labeled `development`. A target claim requires `target` evidence collected on the declared target hardware. An unmatched host, synthetic-only workload, incomplete endpoint coverage, missing quality evidence, uncalibrated estimate, or unexecuted schema cannot support a target low-observer-effect claim.
+
+The baseline begins with every result and the overall conclusion set to `inconclusive`. A low-observer-effect claim is permitted only after the registered campaign is executed and an independent recomputation finds every gate and all 27 results passing.
