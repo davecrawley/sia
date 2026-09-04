@@ -1,0 +1,274 @@
+schema_version: 1
+status: proposed
+artifact_kind: observer-effect-baseline
+specification_revision: 4479bcc19db72f6ad243a87e4b7271496d60d0b7
+requirements:
+  - R01
+  - R12
+  - R38
+  - R40
+adr_path: docs/adr/0001-observer-effect-measurement-contract.md
+adr_revision: proposed-working-tree
+protocol: sia-observer-v1
+dataset_status: unexecuted
+claim_permitted: false
+claim_note: An unexecuted schema is not evidence of low observer effect.
+
+analysis_contract:
+  unit: independent matched pair
+  pair_effect_ratio: log(enabled / disabled)
+  pair_effect_difference: enabled - disabled
+  required_conclusions: 23
+  family_confidence: 0.95
+  multiplicity: two-sided Bonferroni over 23 conclusions
+  individual_confidence: 0.9978260869565218
+  interval_method: sequence-stratified studentized paired bootstrap
+  bootstrap_replicates: 20000
+  bootstrap_unit: complete pair
+  decision: complete adjusted interval must lie strictly inside both limits
+  minimum_final_pairs_per_workload: 30
+  maximum_final_attempted_pairs_per_workload: 200
+  pilot_pairs_per_workload: 20
+  pilot_in_final_analysis: false
+  precision_target: adjusted interval half-width at most half the margin
+  early_stopping: prohibited
+
+workloads:
+  - id: cpu_hash_v1
+    duration_s: 600
+    warmup_s: 120
+    seed_hex: 5349412d4350552d5631
+    concurrency: max(1, logical_cpu_count - 1)
+    input: deterministic 64 MiB buffer per worker
+    target_metric: completed bytes per second
+    gui_active: false
+  - id: storage_stream_v1
+    duration_s: 600
+    warmup_s: 120
+    seed_hex: 5349412d494f2d5631
+    concurrency: 1
+    input: deterministic 64 GiB file, sequential direct reads in 4 MiB blocks
+    target_metric: completed bytes per second
+    gui_active: false
+  - id: gpu_compute_v1
+    duration_s: 600
+    warmup_s: 120
+    seed_hex: 5349412d4750552d5631
+    concurrency: one process and one accelerator queue
+    input: deterministic FP32 Mandelbrot kernel at 8192 by 8192 pixels
+    target_metric: completed pixels per second
+    gui_active: false
+  - id: gui_replay_v1
+    duration_s: 600
+    warmup_s: 120
+    seed_hex: 5349412d4755492d5631
+    concurrency: one 60 Hz replay stream
+    input: versioned gui-replay-v1 ten-minute trace
+    target_metric: presented frames per second
+    gui_active: true
+
+endpoints:
+  target_throughput:
+    unit: workload units per second
+    aggregation: completed units divided by authoritative boundary seconds
+    effect_scale: log_ratio
+    margin_lower: -0.01980262729617973
+    margin_upper: 0.01980262729617973
+  sia_cpu_core_fraction:
+    unit: cores
+    aggregation: SIA process CPU seconds divided by authoritative boundary seconds
+    effect_scale: difference
+    margin_lower: -0.005
+    margin_upper: 0.005
+  sia_peak_rss_mib:
+    unit: MiB
+    aggregation: maximum SIA resident set within authoritative boundary
+    effect_scale: difference
+    margin_lower: -16
+    margin_upper: 16
+  sia_io_mib_s:
+    unit: MiB/s
+    aggregation: SIA read plus write bytes divided by authoritative boundary seconds
+    effect_scale: difference
+    margin_lower: -1
+    margin_upper: 1
+  target_gpu_clock_mhz:
+    unit: MHz
+    aggregation: time-weighted mean target GPU core clock
+    effect_scale: difference
+    margin_lower: -30
+    margin_upper: 30
+  target_gpu_power_w:
+    unit: W
+    aggregation: time-weighted mean target GPU board power
+    effect_scale: difference
+    margin_lower: -3
+    margin_upper: 3
+  target_gpu_temperature_c:
+    unit: degrees C
+    aggregation: maximum steady-state target GPU temperature
+    effect_scale: difference
+    margin_lower: -2
+    margin_upper: 2
+  sia_gpu_busy_pct:
+    unit: percentage points
+    aggregation: time-weighted mean SIA GPU-engine activity
+    effect_scale: difference
+    margin_lower: -1
+    margin_upper: 1
+
+provenance:
+  source_revision: 4479bcc19db72f6ad243a87e4b7271496d60d0b7
+  adr_revision: null
+  session_id: null
+  evidence_class: null
+  observer_configuration_checksum: null
+  disabled_configuration_checksum: null
+  enabled_configuration_checksum: null
+  host_os: null
+  kernel: null
+  cpu_model: null
+  logical_cpu_count: null
+  memory_bytes: null
+  accelerator_model: null
+  accelerator_firmware: null
+  accelerator_driver: null
+  accelerator_runtime: null
+  power_settings: null
+  frequency_settings: null
+  isolation_controls: null
+  environment_controls: null
+  harness_name: null
+  harness_version: null
+  timing_tool_version: null
+  measurement_tool_versions: null
+  workload_input_checksums: null
+  randomization_seed: null
+  calibration:
+    empty_pair_count: null
+    median_timing_cost_s: null
+    sampling_cpu_cost_s: null
+    passed: null
+
+record_schema:
+  attempt_required_fields:
+    - attempt_id
+    - phase
+    - workload
+    - pair_id
+    - sequence
+    - order
+    - attempted_at
+    - inclusion_status
+    - inclusion_reason
+    - environment_diagnostics
+    - disabled
+    - enabled
+  phase_values:
+    - pilot
+    - final
+  sequence_values:
+    - disabled-enabled
+    - enabled-disabled
+  inclusion_status_values:
+    - included
+    - excluded
+    - inconclusive
+  arm_required_fields:
+    - observer_mode
+    - start_timestamp
+    - end_timestamp
+    - boundary_duration_s
+    - completion_status
+    - timeout
+    - target_value
+    - target_unit
+    - sia_cpu_time_s
+    - sia_peak_rss_mib
+    - sia_read_bytes
+    - sia_write_bytes
+    - target_gpu_clock_samples_mhz
+    - target_gpu_power_samples_w
+    - target_gpu_temperature_samples_c
+    - sia_gpu_busy_samples_pct
+    - expected_samples
+    - received_samples
+    - sample_loss_count
+    - sample_loss_rate
+    - collector_lateness_p50_ms
+    - collector_lateness_p95_ms
+    - collector_lateness_max_ms
+    - late_sample_count
+    - collector_errors
+    - synchronization_status
+    - flush_export_teardown_complete
+  environment_required_fields:
+    - warmup_complete
+    - cache_reset_status
+    - starting_cpu_temperature_c
+    - ending_cpu_temperature_c
+    - starting_gpu_temperature_c
+    - ending_gpu_temperature_c
+    - thermal_throttle
+    - power_throttle
+    - background_cpu_max_pct
+    - background_cpu_over_limit_s
+    - swap_bytes
+    - memory_pressure
+    - unexpected_io_mib_s
+    - unexpected_io_over_limit_s
+    - carryover_status
+  objective_exclusion_rules:
+    - any thermal or power throttle flag
+    - cache reset failure
+    - background CPU above 2 percent for over 5 consecutive seconds
+    - any swap activity or memory pressure
+    - unexpected external I/O above 5 MiB/s for 5 seconds
+    - pre-arm temperature outside 2 degrees C of pair baseline
+    - sample loss above 1 percent
+    - collector error
+    - maximum lateness above two sampling periods
+  non_excludable_inconclusive_events:
+    - target crash
+    - SIA crash
+    - enabled-only failure
+    - timeout after 750 seconds
+    - missing endpoint
+    - censoring
+    - missing quality field
+
+attempts: []
+
+results:
+  - {workload: cpu_hash_v1, endpoint: target_throughput, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, margin_lower: -0.01980262729617973, margin_upper: 0.01980262729617973, sample_count: 0, attempted_pairs: 0, exclusions: 0, status: inconclusive}
+  - {workload: cpu_hash_v1, endpoint: sia_cpu_core_fraction, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, margin_lower: -0.005, margin_upper: 0.005, sample_count: 0, attempted_pairs: 0, exclusions: 0, status: inconclusive}
+  - {workload: cpu_hash_v1, endpoint: sia_peak_rss_mib, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, margin_lower: -16, margin_upper: 16, sample_count: 0, attempted_pairs: 0, exclusions: 0, status: inconclusive}
+  - {workload: cpu_hash_v1, endpoint: sia_io_mib_s, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, margin_lower: -1, margin_upper: 1, sample_count: 0, attempted_pairs: 0, exclusions: 0, status: inconclusive}
+  - {workload: storage_stream_v1, endpoint: target_throughput, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, margin_lower: -0.01980262729617973, margin_upper: 0.01980262729617973, sample_count: 0, attempted_pairs: 0, exclusions: 0, status: inconclusive}
+  - {workload: storage_stream_v1, endpoint: sia_cpu_core_fraction, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, margin_lower: -0.005, margin_upper: 0.005, sample_count: 0, attempted_pairs: 0, exclusions: 0, status: inconclusive}
+  - {workload: storage_stream_v1, endpoint: sia_peak_rss_mib, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, margin_lower: -16, margin_upper: 16, sample_count: 0, attempted_pairs: 0, exclusions: 0, status: inconclusive}
+  - {workload: storage_stream_v1, endpoint: sia_io_mib_s, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, margin_lower: -1, margin_upper: 1, sample_count: 0, attempted_pairs: 0, exclusions: 0, status: inconclusive}
+  - {workload: gpu_compute_v1, endpoint: target_throughput, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, margin_lower: -0.01980262729617973, margin_upper: 0.01980262729617973, sample_count: 0, attempted_pairs: 0, exclusions: 0, status: inconclusive}
+  - {workload: gpu_compute_v1, endpoint: sia_cpu_core_fraction, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, margin_lower: -0.005, margin_upper: 0.005, sample_count: 0, attempted_pairs: 0, exclusions: 0, status: inconclusive}
+  - {workload: gpu_compute_v1, endpoint: sia_peak_rss_mib, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, margin_lower: -16, margin_upper: 16, sample_count: 0, attempted_pairs: 0, exclusions: 0, status: inconclusive}
+  - {workload: gpu_compute_v1, endpoint: sia_io_mib_s, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, margin_lower: -1, margin_upper: 1, sample_count: 0, attempted_pairs: 0, exclusions: 0, status: inconclusive}
+  - {workload: gpu_compute_v1, endpoint: target_gpu_clock_mhz, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, margin_lower: -30, margin_upper: 30, sample_count: 0, attempted_pairs: 0, exclusions: 0, status: inconclusive}
+  - {workload: gpu_compute_v1, endpoint: target_gpu_power_w, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, margin_lower: -3, margin_upper: 3, sample_count: 0, attempted_pairs: 0, exclusions: 0, status: inconclusive}
+  - {workload: gpu_compute_v1, endpoint: target_gpu_temperature_c, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, margin_lower: -2, margin_upper: 2, sample_count: 0, attempted_pairs: 0, exclusions: 0, status: inconclusive}
+  - {workload: gui_replay_v1, endpoint: target_throughput, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, margin_lower: -0.01980262729617973, margin_upper: 0.01980262729617973, sample_count: 0, attempted_pairs: 0, exclusions: 0, status: inconclusive}
+  - {workload: gui_replay_v1, endpoint: sia_cpu_core_fraction, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, margin_lower: -0.005, margin_upper: 0.005, sample_count: 0, attempted_pairs: 0, exclusions: 0, status: inconclusive}
+  - {workload: gui_replay_v1, endpoint: sia_peak_rss_mib, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, margin_lower: -16, margin_upper: 16, sample_count: 0, attempted_pairs: 0, exclusions: 0, status: inconclusive}
+  - {workload: gui_replay_v1, endpoint: sia_io_mib_s, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, margin_lower: -1, margin_upper: 1, sample_count: 0, attempted_pairs: 0, exclusions: 0, status: inconclusive}
+  - {workload: gui_replay_v1, endpoint: target_gpu_clock_mhz, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, margin_lower: -30, margin_upper: 30, sample_count: 0, attempted_pairs: 0, exclusions: 0, status: inconclusive}
+  - {workload: gui_replay_v1, endpoint: target_gpu_power_w, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, margin_lower: -3, margin_upper: 3, sample_count: 0, attempted_pairs: 0, exclusions: 0, status: inconclusive}
+  - {workload: gui_replay_v1, endpoint: target_gpu_temperature_c, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, margin_lower: -2, margin_upper: 2, sample_count: 0, attempted_pairs: 0, exclusions: 0, status: inconclusive}
+  - {workload: gui_replay_v1, endpoint: sia_gpu_busy_pct, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, margin_lower: -1, margin_upper: 1, sample_count: 0, attempted_pairs: 0, exclusions: 0, status: inconclusive}
+
+overall_result:
+  required_result_count: 23
+  passed_result_count: 0
+  failed_result_count: 0
+  inconclusive_result_count: 23
+  status: inconclusive
+  low_observer_effect_claim: false
+  rule: pass only when every required result is pass; fail when at least one result fails and none is inconclusive; otherwise inconclusive
