@@ -1,0 +1,245 @@
+schema_version: 1
+artifact_status: proposed
+claim_status: no_measurements_no_claim
+specification_sha: 4479bcc19db72f6ad243a87e4b7271496d60d0b7
+adr_path: docs/adr/0001-low-observer-effect-benchmark.md
+adr_revision: proposed-uncommitted
+requirement_trace:
+  - R01
+  - R12
+  - R38
+  - R40
+
+analysis:
+  unit: independent_adjacent_matched_pair
+  alpha_familywise: 0.05
+  coverage_familywise: 0.95
+  multiplicity: bonferroni_two_sided_over_all_required_workload_endpoint_combinations
+  interval: paired_stratified_percentile_bootstrap
+  bootstrap_resamples: 100000
+  bootstrap_seed: 32452843
+  resampling_unit: complete_pair_within_workload_and_order_sequence
+  ratio_scale: log
+  equivalence_rule: complete_adjusted_interval_strictly_inside_symmetric_margin
+  pilot_pairs_per_workload: 10
+  pilot_in_final_analysis: false
+  confirmatory_minimum_pairs_per_workload: 30
+  confirmatory_maximum_pairs_per_workload: 200
+  planning_power_at_zero_effect: 0.90
+  precision_target: adjusted_interval_half_width_not_greater_than_margin
+  stopping: fixed_sample_no_interim_analysis_no_optional_stopping
+  sample_size_rule: ceil(((z(1-0.05/(2*K))+z(0.90))*pilot_sd/margin)^2), maximum across required endpoints, then clamp to minimum 30; above 200 is inconclusive
+
+quality_gates:
+  sample_loss_rate_max: 0.001
+  collector_lateness_p99_sampling_intervals_max: 2
+  collector_lateness_max_sampling_intervals_max: 5
+  harness_median_timing_cost_fraction_max: 0.005
+  harness_adjusted_interval_upper_fraction_max: 0.01
+  invalid_pair_fraction_max: 0.10
+  target_hardware_match_required: true
+  representative_real_trace_required_for_target_claim: true
+  complete_provenance_required: true
+  complete_endpoint_coverage_required: true
+
+workloads:
+  - id: cpu_compute
+    required: true
+    synthetic: true
+    seed: 104729
+    duration_s: 600
+    warmup_s: 60
+    concurrency: {processes: 1, workers: 1}
+    definition: repeatedly hash deterministic 1 MiB generated blocks
+    required_endpoints: [target_elapsed_time_ms, target_throughput_units_per_s, sia_cpu_time_ms, sia_rss_peak_bytes, sia_io_read_bytes, sia_io_write_bytes]
+  - id: io_pipeline
+    required: true
+    synthetic: true
+    seed: 130363
+    duration_s: 600
+    warmup_s: 60
+    concurrency: {processes: 1, workers: 1}
+    definition: repeatedly sequentially write and read an 8 GiB deterministic data set in 64 KiB blocks with fsync after each GiB
+    required_endpoints: [target_elapsed_time_ms, target_throughput_units_per_s, sia_cpu_time_ms, sia_rss_peak_bytes, sia_io_read_bytes, sia_io_write_bytes]
+  - id: gui_interaction
+    required: true
+    synthetic: true
+    seed: 155921
+    duration_s: 600
+    warmup_s: 60
+    concurrency: {target_sessions: 1, display_width_px: 1920, display_height_px: 1080, refresh_hz: 60}
+    definition: deterministic trace of window creation, text entry, scrolling, image compositing, resize, and close operations
+    required_endpoints: [target_elapsed_time_ms, target_throughput_units_per_s, sia_cpu_time_ms, sia_rss_peak_bytes, sia_io_read_bytes, sia_io_write_bytes, target_gpu_clock_mhz, target_gpu_power_w, target_gpu_temperature_c, sia_gpu_activity_pct]
+  - id: gpu_compute
+    required: true
+    synthetic: true
+    seed: 196613
+    duration_s: 600
+    warmup_s: 60
+    concurrency: {host_submission_threads: 1, device_queues: 1}
+    definition: alternate deterministic matrix-multiplication and image-compositing kernels, synchronizing each one-second epoch
+    required_endpoints: [target_elapsed_time_ms, target_throughput_units_per_s, sia_cpu_time_ms, sia_rss_peak_bytes, sia_io_read_bytes, sia_io_write_bytes, target_gpu_clock_mhz, target_gpu_power_w, target_gpu_temperature_c, sia_gpu_activity_pct]
+
+endpoints:
+  target_elapsed_time_ms: {unit: ms, aggregation: distribution_and_trial_total, effect: enabled_over_disabled_minus_one, margin: 0.03, margin_unit: fraction}
+  target_throughput_units_per_s: {unit: units/s, aggregation: distribution_and_trial_mean, effect: one_minus_enabled_over_disabled, margin: 0.03, margin_unit: fraction}
+  sia_cpu_time_ms: {unit: ms, aggregation: process_user_plus_system_over_complete_boundary, effect: enabled_minus_disabled, margin: 300, margin_unit: ms_per_60s}
+  sia_rss_peak_bytes: {unit: byte, aggregation: trial_maximum, effect: enabled_minus_disabled, margin: 67108864, margin_unit: byte}
+  sia_io_read_bytes: {unit: byte, aggregation: process_attributed_trial_total, effect: enabled_minus_disabled, margin: 5242880, margin_unit: byte}
+  sia_io_write_bytes: {unit: byte, aggregation: process_attributed_trial_total, effect: enabled_minus_disabled, margin: 5242880, margin_unit: byte}
+  target_gpu_clock_mhz: {unit: MHz, aggregation: synchronized_time_weighted_mean, effect: disabled_over_enabled_minus_one, margin: 0.03, margin_unit: fraction}
+  target_gpu_power_w: {unit: W, aggregation: time_weighted_mean_and_maximum, effect: enabled_minus_disabled, margin: 5, margin_unit: W}
+  target_gpu_temperature_c: {unit: degC, aggregation: time_weighted_mean_and_maximum, effect: enabled_minus_disabled, margin: 2, margin_unit: degC}
+  sia_gpu_activity_pct: {unit: percentage_point, aggregation: synchronized_time_weighted_mean, effect: enabled_minus_disabled, margin: 1, margin_unit: percentage_point}
+
+campaign_provenance:
+  source_revision: null
+  adr_revision: null
+  baseline_revision: null
+  configuration_digest: null
+  observer_configuration_digest: null
+  harness_revision: null
+  harness_manifest_digest: null
+  fixture_digests: {}
+  host_role: null
+  target_claim_identity: null
+  target_hardware_match: null
+  representative_real_trace_ids: []
+  host_os: null
+  kernel: null
+  cpu_model: null
+  cpu_count: null
+  memory_bytes: null
+  accelerator_model: null
+  accelerator_driver: null
+  accelerator_runtime: null
+  power_settings: null
+  frequency_settings: null
+  filesystem: null
+  display_stack: null
+  environment_controls: null
+  workload_tool_versions: {}
+  measurement_tool_versions: {}
+  monotonic_clock: null
+  sampling_interval_ms: null
+  campaign_started_at: null
+  campaign_finished_at: null
+
+attempt_schema:
+  required_fields:
+    - attempt_id
+    - pair_id
+    - workload_id
+    - phase
+    - arm
+    - order_sequence
+    - period
+    - input_id
+    - input_digest
+    - seed
+    - concurrency
+    - observer_mode
+    - configuration_digest
+    - host_id
+    - started_at
+    - target_started_at
+    - target_finished_at
+    - observer_teardown_finished_at
+    - cache_state
+    - warmup_completed
+    - ambient_temperature_c
+    - cpu_frequency_hz
+    - gpu_frequency_hz
+    - gpu_power_w
+    - gpu_temperature_c
+    - throttling_flags
+    - background_cpu_pct
+    - background_io_bytes
+    - inclusion_status
+    - inclusion_reason
+    - failure_status
+    - timeout_status
+    - censoring_status
+    - anomaly_flag
+    - anomaly_reason
+    - target_elapsed_time_ms
+    - target_elapsed_distribution_ref
+    - target_throughput_units_per_s
+    - target_throughput_distribution_ref
+    - sia_cpu_time_ms
+    - sia_rss_peak_bytes
+    - sia_io_read_bytes
+    - sia_io_write_bytes
+    - target_gpu_clock_mhz
+    - target_gpu_power_w
+    - target_gpu_power_max_w
+    - target_gpu_temperature_c
+    - target_gpu_temperature_max_c
+    - sia_gpu_activity_pct
+    - sample_count_attempted
+    - sample_count_lost
+    - sample_loss_rate
+    - collector_lateness_samples_ref
+    - collector_lateness_p99_ms
+    - collector_lateness_max_ms
+    - raw_observations_ref
+    - raw_observations_digest
+attempts: []
+
+accounting:
+  attempted_pairs: 0
+  included_pairs: 0
+  excluded_pairs: 0
+  failed_pairs: 0
+  timed_out_pairs: 0
+  missing_pairs: 0
+  censored_pairs: 0
+  exclusion_reasons: {}
+
+result_field_contract: [workload_id, endpoint_id, estimate, adjusted_interval_lower, adjusted_interval_upper, confidence, margin_lower, margin_upper, sample_count, exclusion_count, status, reason]
+results:
+  - {workload_id: cpu_compute, endpoint_id: target_elapsed_time_ms, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -0.03, margin_upper: 0.03, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: cpu_compute, endpoint_id: target_throughput_units_per_s, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -0.03, margin_upper: 0.03, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: cpu_compute, endpoint_id: sia_cpu_time_ms, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -300, margin_upper: 300, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: cpu_compute, endpoint_id: sia_rss_peak_bytes, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -67108864, margin_upper: 67108864, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: cpu_compute, endpoint_id: sia_io_read_bytes, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -5242880, margin_upper: 5242880, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: cpu_compute, endpoint_id: sia_io_write_bytes, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -5242880, margin_upper: 5242880, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: io_pipeline, endpoint_id: target_elapsed_time_ms, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -0.03, margin_upper: 0.03, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: io_pipeline, endpoint_id: target_throughput_units_per_s, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -0.03, margin_upper: 0.03, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: io_pipeline, endpoint_id: sia_cpu_time_ms, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -300, margin_upper: 300, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: io_pipeline, endpoint_id: sia_rss_peak_bytes, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -67108864, margin_upper: 67108864, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: io_pipeline, endpoint_id: sia_io_read_bytes, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -5242880, margin_upper: 5242880, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: io_pipeline, endpoint_id: sia_io_write_bytes, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -5242880, margin_upper: 5242880, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: gui_interaction, endpoint_id: target_elapsed_time_ms, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -0.03, margin_upper: 0.03, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: gui_interaction, endpoint_id: target_throughput_units_per_s, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -0.03, margin_upper: 0.03, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: gui_interaction, endpoint_id: sia_cpu_time_ms, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -300, margin_upper: 300, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: gui_interaction, endpoint_id: sia_rss_peak_bytes, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -67108864, margin_upper: 67108864, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: gui_interaction, endpoint_id: sia_io_read_bytes, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -5242880, margin_upper: 5242880, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: gui_interaction, endpoint_id: sia_io_write_bytes, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -5242880, margin_upper: 5242880, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: gui_interaction, endpoint_id: target_gpu_clock_mhz, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -0.03, margin_upper: 0.03, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: gui_interaction, endpoint_id: target_gpu_power_w, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -5, margin_upper: 5, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: gui_interaction, endpoint_id: target_gpu_temperature_c, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -2, margin_upper: 2, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: gui_interaction, endpoint_id: sia_gpu_activity_pct, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -1, margin_upper: 1, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: gpu_compute, endpoint_id: target_elapsed_time_ms, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -0.03, margin_upper: 0.03, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: gpu_compute, endpoint_id: target_throughput_units_per_s, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -0.03, margin_upper: 0.03, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: gpu_compute, endpoint_id: sia_cpu_time_ms, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -300, margin_upper: 300, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: gpu_compute, endpoint_id: sia_rss_peak_bytes, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -67108864, margin_upper: 67108864, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: gpu_compute, endpoint_id: sia_io_read_bytes, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -5242880, margin_upper: 5242880, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: gpu_compute, endpoint_id: sia_io_write_bytes, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -5242880, margin_upper: 5242880, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: gpu_compute, endpoint_id: target_gpu_clock_mhz, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -0.03, margin_upper: 0.03, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: gpu_compute, endpoint_id: target_gpu_power_w, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -5, margin_upper: 5, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: gpu_compute, endpoint_id: target_gpu_temperature_c, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -2, margin_upper: 2, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+  - {workload_id: gpu_compute, endpoint_id: sia_gpu_activity_pct, estimate: null, adjusted_interval_lower: null, adjusted_interval_upper: null, confidence: null, margin_lower: -1, margin_upper: 1, sample_count: 0, exclusion_count: 0, status: inconclusive, reason: no_measurements}
+
+overall_conclusion:
+  status: inconclusive
+  reason: no_measurements
+  required_result_count: 32
+  passing_result_count: 0
+  failing_result_count: 0
+  inconclusive_result_count: 32
+  quality_gates_pass: false
+  provenance_gate_pass: false
+  target_hardware_gate_pass: false
+  representative_trace_gate_pass: false
+  low_observer_effect_claim_permitted: false

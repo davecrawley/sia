@@ -1,0 +1,273 @@
+artifact: sia-observer-effect-baseline-v1
+status: proposed
+specification_revision: 4479bcc19db72f6ad243a87e4b7271496d60d0b7
+requirements: [R01, R12, R38, R40]
+adr:
+  path: docs/adr/0001-low-observer-effect-benchmark.md
+  revision: null
+claim_allowed: false
+evidence_class: schema_only
+overall:
+  status: inconclusive
+  reason: no outcome-bearing target-hardware measurements exist
+  required_result_count: 49
+  passed_result_count: 0
+  failed_result_count: 0
+  inconclusive_result_count: 49
+  quality_gates_passed: false
+analysis:
+  unit: independent matched pair
+  ratio_effect: log(enabled / disabled)
+  difference_effect: enabled - disabled
+  family_confidence: 0.95
+  multiplicity: Bonferroni across all 49 required workload-endpoint conclusions
+  primary_interval: two-sided Student t interval on paired effects
+  fallback_interval: paired percentile bootstrap with 100000 resamples
+  bootstrap_seed: 32452843
+  equivalence_rule: complete adjusted interval must lie strictly inside both margins
+  minimum_valid_pairs_per_workload: 30
+  pilot_pairs_per_workload: 10
+  maximum_attempted_pairs_per_workload: 200
+  precision_target: adjusted interval half-width no greater than half the equivalence half-margin
+  schedule_seed: 20260905
+provenance:
+  evidence_scope: null
+  source_revision: null
+  adr_revision: null
+  baseline_revision: null
+  configuration_digest: null
+  effective_configuration_reference: null
+  disabled_observer_mode: null
+  enabled_observer_mode: null
+  host_id: null
+  host_class: null
+  target_claim_identifier: null
+  os_name: null
+  os_version: null
+  kernel: null
+  cpu_model: null
+  cpu_count: null
+  memory_bytes: null
+  numa_policy: null
+  cpu_affinity: null
+  accelerator_model: null
+  accelerator_firmware: null
+  accelerator_driver: null
+  accelerator_runtime: null
+  cpu_power_policy: null
+  cpu_frequency_policy: null
+  accelerator_power_policy: null
+  accelerator_frequency_policy: null
+  fan_policy: null
+  machine_isolation_controls: []
+  relevant_environment: {}
+  workload_driver_revision: null
+  workload_manifest_digest: null
+  input_manifest_digest: null
+  schedule_revision: null
+  harness_name: null
+  harness_version: null
+  harness_digest: null
+  harness_clock_source: null
+  harness_clock_resolution_ns: null
+  measurement_tools: []
+  recorded_at_utc: null
+harness_calibration:
+  status: missing
+  noop_pair_count: 0
+  elapsed_time_samples_ms: []
+  cpu_time_samples_ms: []
+  io_read_bytes_samples: []
+  io_write_bytes_samples: []
+  sampling_load_samples: []
+  capable: null
+  reason: not executed
+workloads:
+  cpu_fixed:
+    required: true
+    operation: deterministic dense floating-point matrix multiplication
+    seed: 104729
+    concurrency: 1
+    measured_duration_s: 180
+    warmup_duration_s: 30
+    input: seeded fixed matrices
+  io_fixed:
+    required: true
+    operation: sequential direct reads followed by writes
+    seed: 130363
+    concurrency: 1
+    measured_duration_s: 180
+    warmup_duration_s: 30
+    input: preallocated 8 GiB seeded file
+    block_size_bytes: 1048576
+    queue_depth: 1
+  gpu_fixed:
+    required: true
+    operation: deterministic accelerator matrix multiplication
+    seed: 155921
+    concurrency: 1
+    accelerator_streams: 1
+    measured_duration_s: 180
+    warmup_duration_s: 30
+    input: fixed 8192 by 8192 operands
+  gui_active_fixed:
+    required: true
+    operation: gpu_fixed with SIA dashboard visible
+    seed: 155921
+    concurrency: 1
+    accelerator_streams: 1
+    measured_duration_s: 180
+    warmup_duration_s: 30
+    input: fixed 8192 by 8192 operands
+    gui_window: 1280x720
+    gui_refresh_ms: 1000
+endpoint_catalog:
+  elapsed_p50_ratio: {unit: ratio, aggregation: mean paired log ratio of per-trial median operation latency, margin: {lower: 0.98, upper: 1.02}}
+  elapsed_p95_ratio: {unit: ratio, aggregation: mean paired log ratio of per-trial p95 operation latency, margin: {lower: 0.98, upper: 1.02}}
+  throughput_ratio: {unit: ratio, aggregation: mean paired log ratio of completed operations per second, margin: {lower: 0.98, upper: 1.02}}
+  sia_cpu_fraction_difference: {unit: cpu_seconds_per_wall_second, aggregation: mean paired difference, margin: {lower: -0.01, upper: 0.01}}
+  sia_peak_rss_mib_difference: {unit: MiB, aggregation: mean paired difference, margin: {lower: -32, upper: 32}}
+  sia_read_mib_difference: {unit: MiB_per_trial, aggregation: mean paired difference, margin: {lower: -4, upper: 4}}
+  sia_write_mib_difference: {unit: MiB_per_trial, aggregation: mean paired difference, margin: {lower: -4, upper: 4}}
+  sample_loss_rate_difference: {unit: proportion, aggregation: mean paired difference, margin: {lower: -0.001, upper: 0.001}}
+  collector_lateness_p95_ms_difference: {unit: ms, aggregation: mean paired difference, margin: {lower: -5, upper: 5}}
+  gpu_clock_ratio: {unit: ratio, aggregation: mean paired log ratio of per-trial median active clock, margin: {lower: 0.98, upper: 1.02}}
+  gpu_power_ratio: {unit: ratio, aggregation: mean paired log ratio of per-trial mean power, margin: {lower: 0.97, upper: 1.03}}
+  gpu_temperature_c_difference: {unit: degree_C, aggregation: mean paired difference of per-trial maximum, margin: {lower: -2, upper: 2}}
+  sia_gpu_busy_pp_difference: {unit: percentage_points, aggregation: mean paired difference of SIA GPU busy time, margin: {lower: -1, upper: 1}}
+required_matrix:
+  cpu_fixed: [elapsed_p50_ratio, elapsed_p95_ratio, throughput_ratio, sia_cpu_fraction_difference, sia_peak_rss_mib_difference, sia_read_mib_difference, sia_write_mib_difference, sample_loss_rate_difference, collector_lateness_p95_ms_difference]
+  io_fixed: [elapsed_p50_ratio, elapsed_p95_ratio, throughput_ratio, sia_cpu_fraction_difference, sia_peak_rss_mib_difference, sia_read_mib_difference, sia_write_mib_difference, sample_loss_rate_difference, collector_lateness_p95_ms_difference]
+  gpu_fixed: [elapsed_p50_ratio, elapsed_p95_ratio, throughput_ratio, sia_cpu_fraction_difference, sia_peak_rss_mib_difference, sia_read_mib_difference, sia_write_mib_difference, sample_loss_rate_difference, collector_lateness_p95_ms_difference, gpu_clock_ratio, gpu_power_ratio, gpu_temperature_c_difference]
+  gui_active_fixed: [elapsed_p50_ratio, elapsed_p95_ratio, throughput_ratio, sia_cpu_fraction_difference, sia_peak_rss_mib_difference, sia_read_mib_difference, sia_write_mib_difference, sample_loss_rate_difference, collector_lateness_p95_ms_difference, gpu_clock_ratio, gpu_power_ratio, gpu_temperature_c_difference, sia_gpu_busy_pp_difference]
+raw_observation_schema:
+  storage: inline observations or lossless content-addressed references
+  required_fields:
+    - attempt_id
+    - workload
+    - pair_id
+    - randomized_order
+    - period
+    - arm
+    - target_hardware
+    - start_timestamp_utc
+    - stop_timestamp_utc
+    - monotonic_start_ns
+    - monotonic_stop_ns
+    - inclusion_status
+    - inclusion_reason
+    - target_exit_status
+    - timeout
+    - censored
+    - input_identity
+    - input_digest
+    - concurrency
+    - warmup_s
+    - measured_duration_s
+    - target_elapsed_samples_ms
+    - target_completed_operations
+    - target_throughput_per_s
+    - sia_cpu_time_s
+    - sia_peak_rss_bytes
+    - sia_io_read_bytes
+    - sia_io_write_bytes
+    - target_gpu_clock_samples_mhz
+    - target_gpu_power_samples_w
+    - target_gpu_temperature_samples_c
+    - attempted_sample_count
+    - lost_sample_count
+    - sample_loss_rate
+    - collector_lateness_samples_ms
+    - collector_lateness_p95_ms
+    - collector_lateness_max_ms
+    - sia_gpu_busy_samples_percent
+    - cache_state
+    - pre_run_cpu_temperature_c
+    - post_run_cpu_temperature_c
+    - pre_run_gpu_temperature_c
+    - post_run_gpu_temperature_c
+    - throttle_flags
+    - background_cpu_percent
+    - background_io_mib
+    - clock_synchronization
+    - configuration_digest
+    - units
+attempt_accounting:
+  attempted_pairs: 0
+  attempted_periods: 0
+  valid_complete_pairs: 0
+  excluded_pairs: 0
+  exclusions_by_reason: {}
+  failed_periods: 0
+  timed_out_periods: 0
+  censored_values: 0
+  missing_values: 0
+raw_observations: []
+raw_references: []
+result_field_schema:
+  required_fields: [estimate, adjusted_interval, margin, sample_count, exclusions, status, reason]
+  allowed_status: [pass, fail, inconclusive]
+results:
+  cpu_fixed:
+    elapsed_p50_ratio: &ratio_2 {estimate: null, adjusted_interval: {lower: null, upper: null, confidence: 0.95}, margin: {lower: 0.98, upper: 1.02}, sample_count: 0, exclusions: 0, status: inconclusive, reason: not measured}
+    elapsed_p95_ratio: *ratio_2
+    throughput_ratio: *ratio_2
+    sia_cpu_fraction_difference: &cpu {estimate: null, adjusted_interval: {lower: null, upper: null, confidence: 0.95}, margin: {lower: -0.01, upper: 0.01}, sample_count: 0, exclusions: 0, status: inconclusive, reason: not measured}
+    sia_peak_rss_mib_difference: &rss {estimate: null, adjusted_interval: {lower: null, upper: null, confidence: 0.95}, margin: {lower: -32, upper: 32}, sample_count: 0, exclusions: 0, status: inconclusive, reason: not measured}
+    sia_read_mib_difference: &io {estimate: null, adjusted_interval: {lower: null, upper: null, confidence: 0.95}, margin: {lower: -4, upper: 4}, sample_count: 0, exclusions: 0, status: inconclusive, reason: not measured}
+    sia_write_mib_difference: *io
+    sample_loss_rate_difference: &loss {estimate: null, adjusted_interval: {lower: null, upper: null, confidence: 0.95}, margin: {lower: -0.001, upper: 0.001}, sample_count: 0, exclusions: 0, status: inconclusive, reason: not measured}
+    collector_lateness_p95_ms_difference: &late {estimate: null, adjusted_interval: {lower: null, upper: null, confidence: 0.95}, margin: {lower: -5, upper: 5}, sample_count: 0, exclusions: 0, status: inconclusive, reason: not measured}
+  io_fixed:
+    elapsed_p50_ratio: *ratio_2
+    elapsed_p95_ratio: *ratio_2
+    throughput_ratio: *ratio_2
+    sia_cpu_fraction_difference: *cpu
+    sia_peak_rss_mib_difference: *rss
+    sia_read_mib_difference: *io
+    sia_write_mib_difference: *io
+    sample_loss_rate_difference: *loss
+    collector_lateness_p95_ms_difference: *late
+  gpu_fixed:
+    elapsed_p50_ratio: *ratio_2
+    elapsed_p95_ratio: *ratio_2
+    throughput_ratio: *ratio_2
+    sia_cpu_fraction_difference: *cpu
+    sia_peak_rss_mib_difference: *rss
+    sia_read_mib_difference: *io
+    sia_write_mib_difference: *io
+    sample_loss_rate_difference: *loss
+    collector_lateness_p95_ms_difference: *late
+    gpu_clock_ratio: *ratio_2
+    gpu_power_ratio: &power {estimate: null, adjusted_interval: {lower: null, upper: null, confidence: 0.95}, margin: {lower: 0.97, upper: 1.03}, sample_count: 0, exclusions: 0, status: inconclusive, reason: not measured}
+    gpu_temperature_c_difference: &temp {estimate: null, adjusted_interval: {lower: null, upper: null, confidence: 0.95}, margin: {lower: -2, upper: 2}, sample_count: 0, exclusions: 0, status: inconclusive, reason: not measured}
+  gui_active_fixed:
+    elapsed_p50_ratio: *ratio_2
+    elapsed_p95_ratio: *ratio_2
+    throughput_ratio: *ratio_2
+    sia_cpu_fraction_difference: *cpu
+    sia_peak_rss_mib_difference: *rss
+    sia_read_mib_difference: *io
+    sia_write_mib_difference: *io
+    sample_loss_rate_difference: *loss
+    collector_lateness_p95_ms_difference: *late
+    gpu_clock_ratio: *ratio_2
+    gpu_power_ratio: *power
+    gpu_temperature_c_difference: *temp
+    sia_gpu_busy_pp_difference: {estimate: null, adjusted_interval: {lower: null, upper: null, confidence: 0.95}, margin: {lower: -1, upper: 1}, sample_count: 0, exclusions: 0, status: inconclusive, reason: not measured}
+quality_gates:
+  enabled_sample_loss_rate_max: 0.001
+  enabled_collector_lateness_p95_ms_max: 5
+  enabled_collector_lateness_max_sample_intervals: 2
+  gui_active_sia_gpu_activity_required: true
+  missing_quality_field_result: inconclusive
+claim_gate:
+  target_hardware_required: true
+  complete_endpoint_coverage_required: true
+  calibrated_external_harness_required: true
+  all_results_must_pass: true
+  development_host_sufficient: false
+  synthetic_only_sufficient: false
+  unmatched_host_sufficient: false
+  schema_only_sufficient: false
+  current_status: inconclusive
