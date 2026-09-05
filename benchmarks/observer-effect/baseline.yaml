@@ -1,0 +1,376 @@
+schema_version: observer-effect-baseline-v1
+artifact_status: proposed
+claim_status: not_evaluated
+specification:
+  revision: 4479bcc19db72f6ad243a87e4b7271496d60d0b7
+  requirements:
+    - R01
+    - R12
+    - R38
+    - R40
+adr:
+  path: docs/adr/0001-observer-effect-benchmark.md
+  revision: null
+  status: proposed
+source_revision: null
+
+contract:
+  unit_of_analysis: independent_matched_pair
+  arm_a: observer_disabled
+  arm_b: observer_enabled
+  effect_orientation: enabled_over_or_minus_disabled
+  confidence:
+    family_wise_level: 0.95
+    required_conclusion_count: 30
+    method: bonferroni_adjusted_two_sided_student_t
+    per_conclusion_two_sided_alpha: 0.0016666666666666668
+    critical_probability: 0.9991666666666666
+    resampling_or_variance_unit: pair
+  equivalence_rule: complete_adjusted_interval_strictly_inside_both_margin_bounds
+  overall_rule: all_required_cells_must_pass
+  minimum_confirmatory_pairs: 30
+  maximum_confirmatory_pairs: 200
+  maximum_confirmatory_attempted_pairs: 240
+  pilot_pairs_per_workload: 12
+  pilot_enters_final_analysis: false
+  precision_target: adjusted_interval_half_width_at_most_half_margin
+  interim_testing: forbidden
+
+workloads:
+  - id: cpu-fixed
+    required: true
+    representative: false
+    input_seed: 0x5349412d43505501
+    definition: BLAKE3 over an 8 GiB ChaCha20 stream in 1 MiB blocks with final digest validation
+    concurrency: 1
+    duration_policy: fixed_work
+    warmup: one_complete_unmeasured_run_per_pair
+  - id: io-fixed
+    required: true
+    representative: false
+    input_seed: 0x5349412d494f0001
+    definition: generate, write, sync, cache-reset, read, and BLAKE3-validate one 16 GiB ChaCha20 file
+    concurrency: 1
+    duration_policy: fixed_work
+    warmup: one_unmeasured_1_GiB_write_read_cycle_per_pair
+  - id: accelerator-fixed
+    required: true
+    representative: false
+    input_seed: 0x5349412d47505501
+    definition: render and digest-validate 10000 off-screen 1920x1080 frames of the bundled benchmark scene with final device synchronization
+    concurrency: 1
+    duration_policy: fixed_work
+    warmup: 1000_unmeasured_frames_per_pair
+  - id: gui-active
+    required: true
+    representative: true
+    input_seed: 0x5349412d47554901
+    definition: fixed 900-second SIA GUI replay through overview, CPU, memory, storage, and accelerator views at 1920x1080 and 100 percent scale
+    concurrency: 1
+    duration_policy: fixed_900_seconds
+    warmup: one_complete_five_view_navigation_cycle_per_pair
+
+endpoints:
+  - id: target.elapsed_seconds
+    units: seconds
+    required_for: [cpu-fixed, io-fixed, accelerator-fixed, gui-active]
+    trial_aggregation: authoritative_monotonic_boundary_duration
+    effect_scale: log_ratio
+    margin:
+      lower: -0.0295588022415444
+      upper: 0.0295588022415444
+      presentation_ratio_lower: 0.970873786407767
+      presentation_ratio_upper: 1.03
+  - id: target.throughput_per_second
+    units: completed_units_per_second
+    required_for: [cpu-fixed, io-fixed, accelerator-fixed, gui-active]
+    trial_aggregation: validated_completed_work_divided_by_elapsed_seconds
+    effect_scale: log_ratio
+    margin:
+      lower: -0.0295588022415444
+      upper: 0.0295588022415444
+      presentation_ratio_lower: 0.970873786407767
+      presentation_ratio_upper: 1.03
+  - id: sia.cpu_seconds_per_minute
+    units: cpu_seconds_per_minute
+    required_for: [cpu-fixed, io-fixed, accelerator-fixed, gui-active]
+    trial_aggregation: externally_accounted_user_plus_system_cpu_normalized_to_one_minute
+    effect_scale: difference
+    margin: {lower: -0.30, upper: 0.30}
+  - id: sia.peak_rss_mib
+    units: MiB
+    required_for: [cpu-fixed, io-fixed, accelerator-fixed, gui-active]
+    trial_aggregation: maximum_external_process_rss
+    effect_scale: difference
+    margin: {lower: -64, upper: 64}
+  - id: sia.io_read_mib_per_minute
+    units: MiB_per_minute
+    required_for: [cpu-fixed, io-fixed, accelerator-fixed, gui-active]
+    trial_aggregation: externally_accounted_read_bytes_normalized_to_one_minute
+    effect_scale: difference
+    margin: {lower: -2, upper: 2}
+  - id: sia.io_write_mib_per_minute
+    units: MiB_per_minute
+    required_for: [cpu-fixed, io-fixed, accelerator-fixed, gui-active]
+    trial_aggregation: externally_accounted_written_bytes_including_export_normalized_to_one_minute
+    effect_scale: difference
+    margin: {lower: -2, upper: 2}
+  - id: target.gpu_clock_mhz
+    units: MHz
+    required_for: [accelerator-fixed, gui-active]
+    trial_aggregation: time_weighted_mean_over_complete_boundary
+    effect_scale: log_ratio
+    margin:
+      lower: -0.0295588022415444
+      upper: 0.0295588022415444
+      presentation_ratio_lower: 0.970873786407767
+      presentation_ratio_upper: 1.03
+  - id: target.gpu_power_watts
+    units: watts
+    required_for: [accelerator-fixed, gui-active]
+    trial_aggregation: time_weighted_mean_board_or_package_accelerator_power
+    effect_scale: difference
+    margin: {lower: -2, upper: 2}
+  - id: target.gpu_temperature_celsius
+    units: degrees_Celsius
+    required_for: [accelerator-fixed, gui-active]
+    trial_aggregation: maximum_over_complete_boundary
+    effect_scale: difference
+    margin: {lower: -2, upper: 2}
+
+result_expansion:
+  rule: Each Cartesian product member is one mandatory result cell inheriting the listed cell fields and the matching endpoint margin. No cell may be omitted.
+  grids:
+    - workloads: [cpu-fixed, io-fixed, accelerator-fixed, gui-active]
+      endpoints: [target.elapsed_seconds, target.throughput_per_second, sia.cpu_seconds_per_minute, sia.peak_rss_mib, sia.io_read_mib_per_minute, sia.io_write_mib_per_minute]
+      cell:
+        estimate: null
+        adjusted_interval_lower: null
+        adjusted_interval_upper: null
+        margin_lower: inherited
+        margin_upper: inherited
+        valid_pair_count: 0
+        attempted_pair_count: 0
+        excluded_pair_count: 0
+        status: inconclusive
+        reason: no_measurements
+    - workloads: [accelerator-fixed, gui-active]
+      endpoints: [target.gpu_clock_mhz, target.gpu_power_watts, target.gpu_temperature_celsius]
+      cell:
+        estimate: null
+        adjusted_interval_lower: null
+        adjusted_interval_upper: null
+        margin_lower: inherited
+        margin_upper: inherited
+        valid_pair_count: 0
+        attempted_pair_count: 0
+        excluded_pair_count: 0
+        status: inconclusive
+        reason: no_measurements
+
+overall_result:
+  required_cell_count: 30
+  passed_cell_count: 0
+  failed_cell_count: 0
+  inconclusive_cell_count: 30
+  status: inconclusive
+  reason: no_measurements
+  low_observer_effect_claim_permitted: false
+
+experiment:
+  experiment_id: null
+  phase: unexecuted
+  evidence_scope: null
+  target_claim_name: null
+  preregistration_timestamp_utc: null
+  experiment_seed_256_bit_hex: null
+  schedule_digest_sha256: null
+  configuration_digest_sha256: null
+  observer_disabled_configuration_digest_sha256: null
+  observer_enabled_configuration_digest_sha256: null
+  workload_executable_digests: {}
+  workload_input_digests: {}
+  timeout_seconds_by_workload: {}
+  fixed_confirmatory_pairs_by_workload: {}
+  pilot_variance_and_sample_size_calculations: {}
+
+provenance:
+  source_revision: null
+  adr_revision: null
+  dependency_lock_revision: null
+  configuration_revision: null
+  observer_implementation_revision: null
+  host:
+    identifier: null
+    evidence_scope: null
+    manufacturer: null
+    model: null
+    firmware: null
+    os: null
+    os_image_revision: null
+    kernel: null
+    cpu_model: null
+    cpu_count: null
+    memory_bytes: null
+    numa_configuration: null
+    storage_model: null
+    storage_firmware: null
+    filesystem: null
+    accelerator_model: null
+    accelerator_firmware: null
+    accelerator_driver: null
+    accelerator_runtime: null
+  power_and_frequency:
+    cpu_governor: null
+    cpu_affinity: null
+    turbo_setting: null
+    accelerator_power_limit_watts: null
+    accelerator_clock_policy: null
+    cooling_policy: null
+  environment_controls:
+    machine_isolation: null
+    network_policy: null
+    update_policy: null
+    background_service_policy: null
+    screen_and_display_policy: null
+    cache_reset_facility: null
+  measurement_tools:
+    external_harness: {name: null, version: null, revision: null}
+    wall_clock: {name: null, version: null}
+    process_accounting: {name: null, version: null}
+    accelerator_sampler: {name: null, version: null}
+    replay_driver: {name: null, version: null}
+
+harness_calibration:
+  status: not_run
+  repetitions_required: 30
+  sampling_period_seconds: null
+  timing_overhead_values_seconds: []
+  cpu_seconds_values: []
+  peak_rss_mib_values: []
+  io_read_mib_values: []
+  io_write_mib_values: []
+  sample_loss_rates: []
+  collector_lateness_p99_seconds: []
+  adjusted_upper_timing_overhead_bound: null
+  maximum_allowed_fraction_of_smallest_margin: 0.10
+  conclusion: inconclusive
+
+attempted_trial_schema:
+  required_fields:
+    - attempt_id
+    - phase
+    - workload_id
+    - pair_id
+    - arm
+    - order
+    - period
+    - scheduled_position
+    - start_timestamp_utc
+    - end_timestamp_utc
+    - monotonic_start_nanoseconds
+    - monotonic_end_nanoseconds
+    - observer_mode
+    - configuration_digest_sha256
+    - workload_input_digest_sha256
+    - initial_cache_state
+    - warmup_status
+    - pre_cpu_temperature_celsius
+    - post_cpu_temperature_celsius
+    - pre_gpu_temperature_celsius
+    - post_gpu_temperature_celsius
+    - throttle_flags
+    - background_cpu_percent
+    - background_io_mib
+    - background_gpu_percent
+    - exit_status
+    - timed_out
+    - validation_status
+    - included
+    - exclusion_reason
+    - expected_sample_count
+    - received_sample_count
+    - sample_loss_count
+    - sample_loss_rate
+    - collector_lateness_p99_seconds
+    - collector_lateness_max_seconds
+    - sampling_period_seconds
+    - sia_gpu_busy_seconds
+    - sia_gpu_activity_percent
+    - endpoint_values
+  arm_values: [observer_disabled, observer_enabled]
+  order_values: [AB, BA]
+  phase_values: [pilot, confirmatory]
+  exclusion_reason_values:
+    - null
+    - harness-failure
+    - target-failure
+    - timeout
+    - validation-failure
+    - quality-gate
+    - thermal-gate
+    - throttling
+    - background-interference
+    - cache-state
+    - power-state
+    - carryover-gate
+    - operator-abort-before-outcome
+  endpoint_value_shape:
+    endpoint_id: required
+    observed_value: required
+    units: required
+    measurement_tool: required
+    measurement_tool_version: required
+    measurement_boundary_complete: required
+
+attempted_trials: []
+
+paired_observation_schema:
+  required_fields:
+    - workload_id
+    - endpoint_id
+    - pair_id
+    - order
+    - disabled_attempt_id
+    - enabled_attempt_id
+    - disabled_start_timestamp_utc
+    - enabled_start_timestamp_utc
+    - disabled_value
+    - enabled_value
+    - units
+    - transformed_paired_effect
+    - included
+    - exclusion_reason
+paired_observations: []
+
+accounting:
+  attempted_trial_count: 0
+  included_trial_count: 0
+  excluded_trial_count: 0
+  timed_out_trial_count: 0
+  failed_trial_count: 0
+  missing_measurement_trial_count: 0
+  censored_trial_count: 0
+  attempted_pair_count: 0
+  included_pair_count: 0
+  excluded_pair_count: 0
+  exclusions_by_reason: {}
+
+quality_gate_limits:
+  maximum_sample_loss_rate: 0.005
+  maximum_collector_lateness_p99_in_sampling_periods: 1.5
+  maximum_collector_lateness_in_sampling_periods: 3
+  gui_sia_gpu_activity_required: true
+  missing_required_quality_field_result: inconclusive
+
+claim_guards:
+  adr_or_empty_schema_is_evidence: false
+  target_hardware_required: true
+  matched_host_required: true
+  representative_workload_required: true
+  complete_endpoint_coverage_required: true
+  calibrated_external_harness_required: true
+  raw_paired_observations_required: true
+  complete_provenance_required: true
+  all_required_cells_must_pass: true
+  conflicting_results_may_be_selectively_summarized: false
