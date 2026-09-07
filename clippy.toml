@@ -1,0 +1,4 @@
+# NVML's handle includes a large resolved-symbol table. Each provider owns only one
+# backend instance, so retaining it inline avoids unnecessary indirection while keeping
+# unavailable backends lightweight.
+enum-variant-size-threshold = 16384
