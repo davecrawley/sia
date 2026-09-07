@@ -277,7 +277,7 @@ struct NvidiaProvider {
 
 #[cfg(feature = "nvidia")]
 enum NvidiaBackend {
-    Ready(nvml_wrapper::Nvml, Vec<(u32, EntityId)>),
+    Ready(Box<nvml_wrapper::Nvml>, Vec<(u32, EntityId)>),
     Unavailable(String),
 }
 
@@ -299,7 +299,10 @@ impl NvidiaProvider {
                             (index, entity)
                         })
                         .collect::<Vec<_>>();
-                    (NvidiaBackend::Ready(nvml, entities.clone()), entities)
+                    (
+                        NvidiaBackend::Ready(Box::new(nvml), entities.clone()),
+                        entities,
+                    )
                 }
                 Err(error) => (
                     NvidiaBackend::Unavailable(format!("NVML device discovery failed: {error}")),
