@@ -1,30 +1,26 @@
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MetricId(pub String);
-
 impl From<&str> for MetricId {
-    fn from(value: &str) -> Self {
-        Self(value.to_owned())
+    fn from(v: &str) -> Self {
+        Self(v.into())
     }
 }
-
 impl From<String> for MetricId {
-    fn from(value: String) -> Self {
-        Self(value)
+    fn from(v: String) -> Self {
+        Self(v)
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EntityId(pub String);
-
 impl From<&str> for EntityId {
-    fn from(value: &str) -> Self {
-        Self(value.to_owned())
+    fn from(v: &str) -> Self {
+        Self(v.into())
     }
 }
-
 impl From<String> for EntityId {
-    fn from(value: String) -> Self {
-        Self(value)
+    fn from(v: String) -> Self {
+        Self(v)
     }
 }
 
@@ -78,7 +74,6 @@ pub enum CapabilityState {
     PermissionDenied { reason: Option<String> },
     TemporarilyUnavailable { reason: Option<String> },
 }
-
 impl CapabilityState {
     pub fn is_available(&self) -> bool {
         matches!(self, Self::Available)
@@ -116,13 +111,12 @@ pub enum MetricValue {
     U64(u64),
     State(String),
 }
-
 impl MetricValue {
     pub fn as_f64(&self) -> Option<f64> {
         match self {
-            Self::F64(value) => Some(*value),
-            Self::I64(value) => Some(*value as f64),
-            Self::U64(value) => Some(*value as f64),
+            Self::F64(v) => Some(*v),
+            Self::I64(v) => Some(*v as f64),
+            Self::U64(v) => Some(*v as f64),
             Self::State(_) => None,
         }
     }

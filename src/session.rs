@@ -13,12 +13,11 @@ pub struct LocalLiveSource {
     descriptors: Vec<MetricDescriptor>,
     collectors: Vec<Box<dyn MetricCollector>>,
 }
-
 impl LocalLiveSource {
     pub fn new(collectors: Vec<Box<dyn MetricCollector>>) -> Self {
         let clock_domain = collectors
             .first()
-            .map(|collector| collector.clock_domain())
+            .map(|c| c.clock_domain())
             .unwrap_or("linux_clock_monotonic")
             .to_owned();
         let mut seen = BTreeSet::new();
@@ -30,7 +29,6 @@ impl LocalLiveSource {
                 }
             }
         }
-
         Self {
             metadata: SessionMetadata {
                 schema_version: 1,
@@ -40,7 +38,6 @@ impl LocalLiveSource {
             collectors,
         }
     }
-
     pub fn snapshot(&mut self) -> Result<SessionSnapshot, CollectionError> {
         Ok(SessionSnapshot {
             metadata: self.metadata.clone(),
@@ -49,16 +46,13 @@ impl LocalLiveSource {
         })
     }
 }
-
 impl SessionSource for LocalLiveSource {
     fn metadata(&self) -> &SessionMetadata {
         &self.metadata
     }
-
     fn descriptors(&self) -> &[MetricDescriptor] {
         &self.descriptors
     }
-
     fn poll(&mut self) -> Result<Vec<MetricSample>, CollectionError> {
         let mut samples = Vec::new();
         for collector in &mut self.collectors {
