@@ -77,10 +77,14 @@ impl<C: Clock, P: MetricProvider> Collector<C, P> {
 
     pub fn collect(&mut self) -> CollectionBatch {
         let requested_at = self.clock.now();
+        let readings = self.provider.collect(requested_at);
+        // The authoritative timestamp for readings without a source-native
+        // timestamp is taken after collection, at the end of the observation.
+        let observed_at = self.clock.now();
         let mut capabilities = Vec::new();
         let mut samples = Vec::new();
-        for reading in self.provider.collect(requested_at) {
-            let observation_time = reading.observation_time.unwrap_or(requested_at);
+        for reading in readings {
+            let observation_time = reading.observation_time.unwrap_or(observed_at);
             let (capability, sample) = match reading.outcome {
                 ReadingOutcome::Value(value) => (
                     Capability::available(),
@@ -135,7 +139,7 @@ impl<C: Clock, P: MetricProvider> Collector<C, P> {
             }
         }
         CollectionBatch {
-            observation_time: requested_at,
+            observation_time: observed_at,
             capabilities,
             samples,
         }

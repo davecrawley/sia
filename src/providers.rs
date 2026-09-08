@@ -341,7 +341,7 @@ impl NvidiaProvider {
                     let entity = EntityId("gpu:nvidia:discovery-error".into());
                     (
                         NvidiaBackend::Unavailable {
-                            outcome: nv_error(format!("NVML device discovery failed: {error}")),
+                            outcome: nv_error("NVML device discovery failed", error),
                             entity: entity.clone(),
                         },
                         vec![(0, entity)],
@@ -352,7 +352,7 @@ impl NvidiaProvider {
                 let entity = EntityId("gpu:nvidia:unavailable".into());
                 (
                     NvidiaBackend::Unavailable {
-                        outcome: nv_error(format!("NVML unavailable: {error}")),
+                        outcome: nv_error("NVML unavailable", error),
                         entity: entity.clone(),
                     },
                     vec![(0, entity)],
@@ -406,7 +406,7 @@ impl NvidiaProvider {
                             entity_id: entity.clone(),
                             observation_time: None,
                             interval_start: None,
-                            outcome: nv_error(format!("NVML device query failed: {error}")),
+                            outcome: nv_error("NVML device query failed", error),
                         }
                     }));
                     continue;
@@ -422,7 +422,7 @@ impl NvidiaProvider {
                     memory.used as f64 / memory.total as f64 * 100.0,
                 )),
                 Ok(_) => ReadingOutcome::Error("NVML reported zero total device memory".into()),
-                Err(error) => nv_error(error.to_string()),
+                Err(error) => nv_error("NVML memory query failed", error),
             };
             readings.push(ProviderReading {
                 metric_id: nvidia_metric_id(entity, "memory_utilization"),
@@ -500,10 +500,10 @@ fn nvidia_descriptors(entity: &EntityId) -> Vec<MetricTarget> {
 }
 
 #[cfg(feature = "nvidia")]
-fn nv_read<T: std::fmt::Display>(
+fn nv_read(
     metric: MetricId,
     entity: EntityId,
-    result: Result<f64, T>,
+    result: Result<f64, nvml_wrapper::error::NvmlError>,
 ) -> ProviderReading {
     ProviderReading {
         metric_id: metric,
@@ -512,21 +512,26 @@ fn nv_read<T: std::fmt::Display>(
         interval_start: None,
         outcome: match result {
             Ok(value) => ReadingOutcome::Value(SampleValue::Numeric(value)),
-            Err(error) => nv_error(error.to_string()),
+            Err(error) => nv_error("NVML metric query failed", error),
         },
     }
 }
 
 #[cfg(feature = "nvidia")]
-fn nv_error(detail: String) -> ReadingOutcome {
-    let lower = detail.to_lowercase();
-    if lower.contains("not supported") || lower.contains("unsupported") {
-        ReadingOutcome::Unsupported(detail)
-    } else if lower.contains("permission") || lower.contains("not authorized") {
-        ReadingOutcome::PermissionDenied(detail)
-    } else if lower.contains("temporar") || lower.contains("lost") || lower.contains("reset") {
-        ReadingOutcome::TemporarilyUnavailable(detail)
-    } else {
-        ReadingOutcome::Error(detail)
+fn nv_error(context: &str, error: nvml_wrapper::error::NvmlError) -> ReadingOutcome {
+    use nvml_wrapper::error::NvmlError;
+
+    let detail = format!("{context}: {error}");
+    match error {
+        NvmlError::NotSupported | NvmlError::VgpuEccNotSupported => {
+            ReadingOutcome::Unsupported(detail)
+        }
+        NvmlError::NoPermission => ReadingOutcome::PermissionDenied(detail),
+        NvmlError::Timeout
+        | NvmlError::GpuLost
+        | NvmlError::ResetRequired
+        | NvmlError::InUse
+        | NvmlError::NoData => ReadingOutcome::TemporarilyUnavailable(detail),
+        _ => ReadingOutcome::Error(detail),
     }
 }

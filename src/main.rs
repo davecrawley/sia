@@ -276,6 +276,13 @@ impl App {
         }
     }
 
+    fn trace_is_plottable(&self, trace: &Trace) -> bool {
+        !matches!(
+            current_value(&self.model, &trace.metric, &trace.entity),
+            CurrentValue::Unsupported(_)
+        )
+    }
+
     fn state_text(&self, trace: &Trace) -> String {
         match current_value(&self.model, &trace.metric, &trace.entity) {
             CurrentValue::Value(_) => "ok".into(),
@@ -328,7 +335,7 @@ impl App {
                 }
                 for index in &group.traces {
                     let trace = &self.traces[*index];
-                    if !trace.visible {
+                    if !trace.visible || !self.trace_is_plottable(trace) {
                         continue;
                     }
                     let mut label = trace.label.clone();
@@ -413,6 +420,7 @@ impl eframe::App for App {
                     plot.set_plot_bounds(PlotBounds::from_min_max([start, 0.0], [end, 100.0]));
                     for trace in &self.traces {
                         if trace.visible
+                            && self.trace_is_plottable(trace)
                             && trace.scale == 1.0
                             && (trace.metric.0.contains("utilization")
                                 || trace.metric.0 == RAM_UTILIZATION)
@@ -436,7 +444,7 @@ impl eframe::App for App {
                     if group.visible {
                         for index in &group.traces {
                             let trace = &self.traces[*index];
-                            if trace.visible {
+                            if trace.visible && self.trace_is_plottable(trace) {
                                 if let Some((a, b)) = trace.series.min_max(start, end, 1.0) {
                                     min = min.min(a);
                                     max = max.max(b);
@@ -457,7 +465,7 @@ impl eframe::App for App {
                     if group.visible {
                         for index in &group.traces {
                             let trace = &self.traces[*index];
-                            if trace.visible {
+                            if trace.visible && self.trace_is_plottable(trace) {
                                 Self::draw_trace(plot, trace, start);
                             }
                         }
@@ -469,7 +477,7 @@ impl eframe::App for App {
             Plot::new("freq").height(240.0).show(ui, |plot| {
                 let mut max: f64 = 1.0;
                 for trace in &self.traces {
-                    if trace.visible && trace.scale > 1.0 {
+                    if trace.visible && self.trace_is_plottable(trace) && trace.scale > 1.0 {
                         if let Some((_, value)) = trace.series.min_max(start, end, trace.scale) {
                             max = max.max(value);
                         }
@@ -480,7 +488,7 @@ impl eframe::App for App {
                     [end, (max * 1.1).max(1.0)],
                 ));
                 for trace in &self.traces {
-                    if trace.visible && trace.scale > 1.0 {
+                    if trace.visible && self.trace_is_plottable(trace) && trace.scale > 1.0 {
                         Self::draw_trace(plot, trace, start);
                     }
                 }
