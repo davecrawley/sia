@@ -483,14 +483,14 @@ fn nvidia_descriptors(entity: &EntityId) -> Vec<MetricTarget> {
             "nvml",
             "per-device point query from NVML",
         );
+        item.comparability_group = Some(format!("nvidia.{suffix}"));
         if suffix == "utilization" {
             item.temporal_semantics = TemporalSemantics::VendorSampled;
             item.source_semantics =
-                "NVML vendor-sampled GPU utilization over a product-dependent window (about 1/6 s to 1 s); the query does not expose the exact window"
+                "GPU utilization over an NVML vendor-defined sampling window; NVML does not expose the exact window for this query"
                     .into();
             item.source_resolution_ns = None;
         }
-        item.comparability_group = Some(format!("nvidia.{suffix}"));
         MetricTarget {
             descriptor: item,
             entity_id: entity.clone(),

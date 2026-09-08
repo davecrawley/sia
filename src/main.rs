@@ -407,8 +407,8 @@ impl eframe::App for App {
             let end = self.elapsed.max(self.display_window_secs);
             ui.heading("Utilization");
             Plot::new("util")
-                .height(220.0)
                 .legend(Legend::default())
+                .height(220.0)
                 .show(ui, |plot| {
                     plot.set_plot_bounds(PlotBounds::from_min_max([start, 0.0], [end, 100.0]));
                     for trace in &self.traces {
