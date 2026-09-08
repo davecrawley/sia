@@ -524,15 +524,21 @@ fn nv_error(context: &str, error: nvml_wrapper::error::NvmlError) -> ReadingOutc
 
     let detail = format!("{context}: {error}");
     match error {
-        NvmlError::NotSupported | NvmlError::VgpuEccNotSupported => {
+        NvmlError::NotSupported | NvmlError::VgpuEccNotSupported | NvmlError::FunctionNotFound => {
             ReadingOutcome::Unsupported(detail)
         }
-        NvmlError::NoPermission => ReadingOutcome::PermissionDenied(detail),
+        NvmlError::NoPermission | NvmlError::OperatingSystem => {
+            ReadingOutcome::PermissionDenied(detail)
+        }
         NvmlError::Timeout
         | NvmlError::GpuLost
         | NvmlError::ResetRequired
         | NvmlError::InUse
-        | NvmlError::NoData => ReadingOutcome::TemporarilyUnavailable(detail),
+        | NvmlError::NoData
+        | NvmlError::DriverNotLoaded
+        | NvmlError::Uninitialized
+        | NvmlError::LibraryNotFound
+        | NvmlError::LibRmVersionMismatch => ReadingOutcome::TemporarilyUnavailable(detail),
         _ => ReadingOutcome::Error(detail),
     }
 }
