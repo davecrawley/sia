@@ -92,16 +92,19 @@ impl<C: Clock, P: MetricProvider> Collector<C, P> {
                 ReadingOutcome::Unsupported(detail) => (
                     Capability {
                         status: CapabilityStatus::Unsupported,
-                        detail: Some(detail),
+                        detail: Some(detail.clone()),
                     },
-                    None,
+                    Some((None, SampleStatus::Error(format!("unsupported: {detail}")))),
                 ),
                 ReadingOutcome::PermissionDenied(detail) => (
                     Capability {
                         status: CapabilityStatus::PermissionDenied,
-                        detail: Some(detail),
+                        detail: Some(detail.clone()),
                     },
-                    None,
+                    Some((
+                        None,
+                        SampleStatus::Error(format!("permission denied: {detail}")),
+                    )),
                 ),
                 ReadingOutcome::TemporarilyUnavailable(detail) => (
                     Capability {

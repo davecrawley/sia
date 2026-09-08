@@ -308,7 +308,10 @@ struct NvidiaProvider {
 #[cfg(feature = "nvidia")]
 enum NvidiaBackend {
     Ready(Box<nvml_wrapper::Nvml>, Vec<(u32, EntityId)>),
-    Unavailable { detail: String, entity: EntityId },
+    Unavailable {
+        outcome: ReadingOutcome,
+        entity: EntityId,
+    },
 }
 
 #[cfg(feature = "nvidia")]
@@ -338,7 +341,7 @@ impl NvidiaProvider {
                     let entity = EntityId("gpu:nvidia:discovery-error".into());
                     (
                         NvidiaBackend::Unavailable {
-                            detail: format!("NVML device discovery failed: {error}"),
+                            outcome: nv_error(format!("NVML device discovery failed: {error}")),
                             entity: entity.clone(),
                         },
                         vec![(0, entity)],
@@ -349,7 +352,7 @@ impl NvidiaProvider {
                 let entity = EntityId("gpu:nvidia:unavailable".into());
                 (
                     NvidiaBackend::Unavailable {
-                        detail: format!("NVML unavailable: {error}"),
+                        outcome: nv_error(format!("NVML unavailable: {error}")),
                         entity: entity.clone(),
                     },
                     vec![(0, entity)],
@@ -377,7 +380,7 @@ impl NvidiaProvider {
     fn collect(&mut self, _requested_at: ObservationTime) -> Vec<ProviderReading> {
         use nvml_wrapper::enum_wrappers::device::{Clock, TemperatureSensor};
         let NvidiaBackend::Ready(nvml, entities) = &self.backend else {
-            let NvidiaBackend::Unavailable { detail, entity } = &self.backend else {
+            let NvidiaBackend::Unavailable { outcome, entity } = &self.backend else {
                 unreachable!()
             };
             return self
@@ -388,7 +391,7 @@ impl NvidiaProvider {
                     entity_id: entity.clone(),
                     observation_time: None,
                     interval_start: None,
-                    outcome: ReadingOutcome::Error(detail.clone()),
+                    outcome: outcome.clone(),
                 })
                 .collect();
         };
@@ -480,6 +483,13 @@ fn nvidia_descriptors(entity: &EntityId) -> Vec<MetricTarget> {
             "nvml",
             "per-device point query from NVML",
         );
+        if suffix == "utilization" {
+            item.temporal_semantics = TemporalSemantics::VendorSampled;
+            item.source_semantics =
+                "NVML vendor-sampled GPU utilization over a product-dependent window (about 1/6 s to 1 s); the query does not expose the exact window"
+                    .into();
+            item.source_resolution_ns = None;
+        }
         item.comparability_group = Some(format!("nvidia.{suffix}"));
         MetricTarget {
             descriptor: item,

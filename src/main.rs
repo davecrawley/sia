@@ -1,6 +1,6 @@
 use eframe::{egui, egui::Vec2};
 use egui::{Align2, Color32, FontFamily, FontId, RichText, TextStyle};
-use egui_plot::{Line, Plot, PlotBounds, PlotPoints, Text};
+use egui_plot::{Legend, Line, Plot, PlotBounds, PlotPoints, Text};
 use sia::collection::MetricProvider;
 use sia::presentation::{current_value, CurrentValue};
 use sia::providers::{HostProvider, CPU_UTILIZATION, RAM_UTILIZATION};
@@ -406,24 +406,27 @@ impl eframe::App for App {
             let start = (self.elapsed - self.display_window_secs).max(0.0);
             let end = self.elapsed.max(self.display_window_secs);
             ui.heading("Utilization");
-            Plot::new("util").height(220.0).show(ui, |plot| {
-                plot.set_plot_bounds(PlotBounds::from_min_max([start, 0.0], [end, 100.0]));
-                for trace in &self.traces {
-                    if trace.visible
-                        && trace.scale == 1.0
-                        && (trace.metric.0.contains("utilization")
-                            || trace.metric.0 == RAM_UTILIZATION)
-                    {
-                        Self::draw_trace(plot, trace, start);
+            Plot::new("util")
+                .height(220.0)
+                .legend(Legend::default())
+                .show(ui, |plot| {
+                    plot.set_plot_bounds(PlotBounds::from_min_max([start, 0.0], [end, 100.0]));
+                    for trace in &self.traces {
+                        if trace.visible
+                            && trace.scale == 1.0
+                            && (trace.metric.0.contains("utilization")
+                                || trace.metric.0 == RAM_UTILIZATION)
+                        {
+                            Self::draw_trace(plot, trace, start);
+                        }
                     }
-                }
-                for value in [0.0, 25.0, 50.0, 75.0, 100.0] {
-                    plot.text(
-                        Text::new([end, value].into(), format!("{value:.0}%"))
-                            .anchor(Align2::RIGHT_CENTER),
-                    );
-                }
-            });
+                    for value in [0.0, 25.0, 50.0, 75.0, 100.0] {
+                        plot.text(
+                            Text::new([end, value].into(), format!("{value:.0}%"))
+                                .anchor(Align2::RIGHT_CENTER),
+                        );
+                    }
+                });
             ui.separator();
             ui.heading("Temperatures (°C)");
             Plot::new("temps").height(260.0).show(ui, |plot| {
