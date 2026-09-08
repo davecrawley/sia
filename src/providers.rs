@@ -1,17 +1,15 @@
-use crate::collection::{MetricProvider, ProviderReading, ReadingOutcome};
+use crate::collection::{MetricProvider, MetricTarget, ProviderReading, ReadingOutcome};
 use crate::model::{
     CanonicalUnit, CapabilityStatus, EntityId, EntityKind, MetricDescriptor, MetricId,
     ObservationTime, SampleValue, TemporalSemantics, ValueKind,
 };
 use std::fs;
 use std::io::{self, Read};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use sysinfo::{CpuExt, System, SystemExt};
 
 pub const CPU_UTILIZATION: &str = "system.cpu.utilization";
 pub const RAM_UTILIZATION: &str = "system.memory.utilization";
-pub const GPU_UTILIZATION: &str = "gpu.utilization";
-pub const GPU_MEMORY_UTILIZATION: &str = "gpu.memory.utilization";
 
 #[derive(Clone)]
 struct FileMetric {
@@ -25,21 +23,24 @@ pub struct HostProvider {
     system: System,
     file_metrics: Vec<FileMetric>,
     descriptors: Vec<MetricDescriptor>,
+    previous_collection: Option<ObservationTime>,
     #[cfg(feature = "nvidia")]
     nvidia: NvidiaProvider,
 }
 
 impl HostProvider {
     pub fn new() -> Self {
+        let mut cpu = descriptor(
+            CPU_UTILIZATION,
+            "CPU",
+            EntityKind::Cpu,
+            CanonicalUnit::Percent,
+            "sysinfo",
+            "mean logical CPU utilization over the sysinfo refresh interval",
+        );
+        cpu.temporal_semantics = TemporalSemantics::IntervalAverage;
         let mut descriptors = vec![
-            descriptor(
-                CPU_UTILIZATION,
-                "CPU",
-                EntityKind::Cpu,
-                CanonicalUnit::Percent,
-                "sysinfo",
-                "mean logical CPU utilization",
-            ),
+            cpu,
             descriptor(
                 RAM_UTILIZATION,
                 "RAM",
@@ -60,6 +61,7 @@ impl HostProvider {
             system: System::new_all(),
             file_metrics,
             descriptors,
+            previous_collection: None,
             #[cfg(feature = "nvidia")]
             nvidia,
         }
@@ -77,6 +79,26 @@ impl MetricProvider for HostProvider {
         self.descriptors.clone()
     }
 
+    fn targets(&self) -> Vec<MetricTarget> {
+        let mut targets = vec![
+            MetricTarget {
+                descriptor: self.descriptors[0].clone(),
+                entity_id: "system".into(),
+            },
+            MetricTarget {
+                descriptor: self.descriptors[1].clone(),
+                entity_id: "system".into(),
+            },
+        ];
+        targets.extend(self.file_metrics.iter().map(|metric| MetricTarget {
+            descriptor: metric.descriptor.clone(),
+            entity_id: metric.entity.clone(),
+        }));
+        #[cfg(feature = "nvidia")]
+        targets.extend(self.nvidia.targets());
+        targets
+    }
+
     fn collect(&mut self, requested_at: ObservationTime) -> Vec<ProviderReading> {
         self.system.refresh_cpu();
         self.system.refresh_memory();
@@ -91,7 +113,9 @@ impl MetricProvider for HostProvider {
                 .map(|cpu| cpu.cpu_usage() as f64)
                 .sum::<f64>()
                 / self.system.cpus().len() as f64;
-            readings.push(ProviderReading::numeric(CPU_UTILIZATION, "system", value));
+            let mut reading = ProviderReading::numeric(CPU_UTILIZATION, "system", value);
+            reading.interval_start = self.previous_collection;
+            readings.push(reading);
         }
         let total = self.system.total_memory() as f64;
         if total > 0.0 {
@@ -121,6 +145,7 @@ impl MetricProvider for HostProvider {
         }
         #[cfg(feature = "nvidia")]
         readings.extend(self.nvidia.collect(requested_at));
+        self.previous_collection = Some(requested_at);
         readings
     }
 }
@@ -134,7 +159,7 @@ fn descriptor(
     semantics: &str,
 ) -> MetricDescriptor {
     MetricDescriptor {
-        metric_id: MetricId::from(id),
+        metric_id: id.into(),
         display_name: name.into(),
         entity_kind: kind,
         canonical_unit: unit,
@@ -159,7 +184,7 @@ fn unavailable(metric: &str, entity: &str, detail: &str) -> ProviderReading {
     }
 }
 
-fn read_number(path: &PathBuf) -> io::Result<f64> {
+fn read_number(path: &Path) -> io::Result<f64> {
     let mut text = String::new();
     fs::File::open(path)?.read_to_string(&mut text)?;
     text.trim()
@@ -213,7 +238,7 @@ fn discover_frequencies() -> Vec<FileMetric> {
                 "linux_sysfs",
                 "source-native CPU frequency",
             ),
-            entity: EntityId(format!("cpu:{core}")),
+            entity: format!("cpu:{core}").into(),
             path: source,
             scale: 1_000.0,
         });
@@ -229,6 +254,11 @@ fn discover_temperatures() -> Vec<FileMetric> {
     };
     for entry in entries.flatten() {
         let base = entry.path();
+        let instance = base
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("hwmon")
+            .to_owned();
         let chip = fs::read_to_string(base.join("name"))
             .unwrap_or_else(|_| "hwmon".into())
             .trim()
@@ -248,37 +278,37 @@ fn discover_temperatures() -> Vec<FileMetric> {
                 .unwrap_or_else(|_| chip.clone())
                 .trim()
                 .to_owned();
-            let id = format!("thermal.{}.{}", chip, filename.trim_end_matches("_input"));
-            let mut item = descriptor(
-                &id,
-                &label,
-                EntityKind::ThermalSensor,
-                CanonicalUnit::Celsius,
-                "linux_hwmon",
-                &chip,
-            );
-            item.source_resolution_ns = None;
+            let sensor = filename.trim_end_matches("_input");
+            let id = format!("thermal.{instance}.{sensor}");
             metrics.push(FileMetric {
-                descriptor: item,
-                entity: EntityId(format!("hwmon:{chip}:{filename}")),
+                descriptor: descriptor(
+                    &id,
+                    &label,
+                    EntityKind::ThermalSensor,
+                    CanonicalUnit::Celsius,
+                    "linux_hwmon",
+                    &format!("{chip} at {instance}/{filename}"),
+                ),
+                entity: format!("hwmon:{instance}:{sensor}").into(),
                 path,
                 scale: 0.001,
             });
         }
     }
+    metrics.sort_by(|a, b| a.entity.cmp(&b.entity));
     metrics
 }
 
 #[cfg(feature = "nvidia")]
 struct NvidiaProvider {
     backend: NvidiaBackend,
-    descriptors: Vec<MetricDescriptor>,
+    targets: Vec<MetricTarget>,
 }
 
 #[cfg(feature = "nvidia")]
 enum NvidiaBackend {
     Ready(Box<nvml_wrapper::Nvml>, Vec<(u32, EntityId)>),
-    Unavailable(String),
+    Unavailable { detail: String, entity: EntityId },
 }
 
 #[cfg(feature = "nvidia")]
@@ -304,127 +334,133 @@ impl NvidiaProvider {
                         entities,
                     )
                 }
-                Err(error) => (
-                    NvidiaBackend::Unavailable(format!("NVML device discovery failed: {error}")),
-                    vec![(0, EntityId("gpu:nvidia:discovery-error".into()))],
-                ),
+                Err(error) => {
+                    let entity = EntityId("gpu:nvidia:discovery-error".into());
+                    (
+                        NvidiaBackend::Unavailable {
+                            detail: format!("NVML device discovery failed: {error}"),
+                            entity: entity.clone(),
+                        },
+                        vec![(0, entity)],
+                    )
+                }
             },
-            Err(error) => (
-                NvidiaBackend::Unavailable(format!("NVML unavailable: {error}")),
-                vec![(0, EntityId("gpu:nvidia:unavailable".into()))],
-            ),
+            Err(error) => {
+                let entity = EntityId("gpu:nvidia:unavailable".into());
+                (
+                    NvidiaBackend::Unavailable {
+                        detail: format!("NVML unavailable: {error}"),
+                        entity: entity.clone(),
+                    },
+                    vec![(0, entity)],
+                )
+            }
         };
-        let mut descriptors = Vec::new();
-        for (_, entity) in entities {
-            descriptors.extend(nvidia_descriptors(&entity));
-        }
-        Self {
-            backend,
-            descriptors,
-        }
+        let targets = entities
+            .into_iter()
+            .flat_map(|(_, entity)| nvidia_descriptors(&entity))
+            .collect();
+        Self { backend, targets }
     }
 
     fn descriptors(&self) -> Vec<MetricDescriptor> {
-        self.descriptors.clone()
+        self.targets
+            .iter()
+            .map(|target| target.descriptor.clone())
+            .collect()
+    }
+
+    fn targets(&self) -> Vec<MetricTarget> {
+        self.targets.clone()
     }
 
     fn collect(&mut self, _requested_at: ObservationTime) -> Vec<ProviderReading> {
         use nvml_wrapper::enum_wrappers::device::{Clock, TemperatureSensor};
         let NvidiaBackend::Ready(nvml, entities) = &self.backend else {
-            let NvidiaBackend::Unavailable(detail) = &self.backend else {
+            let NvidiaBackend::Unavailable { detail, entity } = &self.backend else {
                 unreachable!()
             };
             return self
-                .descriptors
+                .targets
                 .iter()
-                .map(|descriptor| ProviderReading {
-                    metric_id: descriptor.metric_id.clone(),
-                    entity_id: EntityId("gpu:nvidia:unavailable".into()),
+                .map(|target| ProviderReading {
+                    metric_id: target.descriptor.metric_id.clone(),
+                    entity_id: entity.clone(),
                     observation_time: None,
                     interval_start: None,
                     outcome: ReadingOutcome::Error(detail.clone()),
                 })
                 .collect();
         };
-        let mut result = Vec::new();
+        let mut readings = Vec::new();
         for (index, entity) in entities {
             let device = match nvml.device_by_index(*index) {
                 Ok(device) => device,
                 Err(error) => {
-                    for descriptor in nvidia_descriptors(entity) {
-                        result.push(ProviderReading {
-                            metric_id: descriptor.metric_id,
+                    readings.extend(nvidia_descriptors(entity).into_iter().map(|target| {
+                        ProviderReading {
+                            metric_id: target.descriptor.metric_id,
                             entity_id: entity.clone(),
                             observation_time: None,
                             interval_start: None,
-                            outcome: ReadingOutcome::Error(format!(
-                                "NVML device query failed: {error}"
-                            )),
-                        });
-                    }
+                            outcome: nv_error(format!("NVML device query failed: {error}")),
+                        }
+                    }));
                     continue;
                 }
             };
-            let prefix = entity.0.replace(':', ".");
-            result.push(nv_read(
-                format!("{prefix}.utilization"),
+            readings.push(nv_read(
+                nvidia_metric_id(entity, "utilization"),
                 entity.clone(),
                 device.utilization_rates().map(|value| value.gpu as f64),
             ));
-            result.push(nv_read(
-                format!("{prefix}.memory_utilization"),
-                entity.clone(),
-                device.memory_info().map(|value| {
-                    if value.total == 0 {
-                        0.0
-                    } else {
-                        value.used as f64 / value.total as f64 * 100.0
-                    }
-                }),
-            ));
-            result.push(nv_read(
-                format!("{prefix}.temperature"),
+            let memory_outcome = match device.memory_info() {
+                Ok(memory) if memory.total > 0 => ReadingOutcome::Value(SampleValue::Numeric(
+                    memory.used as f64 / memory.total as f64 * 100.0,
+                )),
+                Ok(_) => ReadingOutcome::Error("NVML reported zero total device memory".into()),
+                Err(error) => nv_error(error.to_string()),
+            };
+            readings.push(ProviderReading {
+                metric_id: nvidia_metric_id(entity, "memory_utilization"),
+                entity_id: entity.clone(),
+                observation_time: None,
+                interval_start: None,
+                outcome: memory_outcome,
+            });
+            readings.push(nv_read(
+                nvidia_metric_id(entity, "temperature"),
                 entity.clone(),
                 device
                     .temperature(TemperatureSensor::Gpu)
                     .map(|value| value as f64),
             ));
-            result.push(nv_read(
-                format!("{prefix}.clock.graphics"),
-                entity.clone(),
-                device
-                    .clock_info(Clock::Graphics)
-                    .map(|value| value as f64 * 1_000_000.0),
-            ));
-            result.push(nv_read(
-                format!("{prefix}.clock.sm"),
-                entity.clone(),
-                device
-                    .clock_info(Clock::SM)
-                    .map(|value| value as f64 * 1_000_000.0),
-            ));
-            result.push(nv_read(
-                format!("{prefix}.clock.memory"),
-                entity.clone(),
-                device
-                    .clock_info(Clock::Memory)
-                    .map(|value| value as f64 * 1_000_000.0),
-            ));
-            result.push(nv_read(
-                format!("{prefix}.clock.video"),
-                entity.clone(),
-                device
-                    .clock_info(Clock::Video)
-                    .map(|value| value as f64 * 1_000_000.0),
-            ));
+            for (suffix, clock) in [
+                ("clock.graphics", Clock::Graphics),
+                ("clock.sm", Clock::SM),
+                ("clock.memory", Clock::Memory),
+                ("clock.video", Clock::Video),
+            ] {
+                readings.push(nv_read(
+                    nvidia_metric_id(entity, suffix),
+                    entity.clone(),
+                    device
+                        .clock_info(clock)
+                        .map(|value| value as f64 * 1_000_000.0),
+                ));
+            }
         }
-        result
+        readings
     }
 }
 
 #[cfg(feature = "nvidia")]
-fn nvidia_descriptors(entity: &EntityId) -> Vec<MetricDescriptor> {
-    let prefix = entity.0.replace(':', ".");
+fn nvidia_metric_id(entity: &EntityId, suffix: &str) -> MetricId {
+    format!("{}.{}", entity.0.replace(':', "."), suffix).into()
+}
+
+#[cfg(feature = "nvidia")]
+fn nvidia_descriptors(entity: &EntityId) -> Vec<MetricTarget> {
     [
         ("utilization", "GPU %", CanonicalUnit::Percent),
         ("memory_utilization", "VRAM %", CanonicalUnit::Percent),
@@ -436,51 +472,51 @@ fn nvidia_descriptors(entity: &EntityId) -> Vec<MetricDescriptor> {
     ]
     .into_iter()
     .map(|(suffix, name, unit)| {
-        let mut value = descriptor(
-            &format!("{prefix}.{suffix}"),
+        let mut item = descriptor(
+            &nvidia_metric_id(entity, suffix).0,
             name,
             EntityKind::Gpu,
             unit,
             "nvml",
-            "per-device NVML query result",
+            "per-device point query from NVML",
         );
-        value.temporal_semantics = TemporalSemantics::VendorSampled;
-        value.comparability_group = Some(format!("nvidia.{suffix}"));
-        value
+        item.comparability_group = Some(format!("nvidia.{suffix}"));
+        MetricTarget {
+            descriptor: item,
+            entity_id: entity.clone(),
+        }
     })
     .collect()
 }
 
 #[cfg(feature = "nvidia")]
 fn nv_read<T: std::fmt::Display>(
-    metric: String,
+    metric: MetricId,
     entity: EntityId,
     result: Result<f64, T>,
 ) -> ProviderReading {
-    let outcome = match result {
-        Ok(value) => ReadingOutcome::Value(SampleValue::Numeric(value)),
-        Err(error) => {
-            let detail = error.to_string();
-            let lower = detail.to_lowercase();
-            if lower.contains("not supported") {
-                ReadingOutcome::Unsupported(detail)
-            } else if lower.contains("permission") || lower.contains("no permission") {
-                ReadingOutcome::PermissionDenied(detail)
-            } else if lower.contains("temporar")
-                || lower.contains("lost")
-                || lower.contains("reset")
-            {
-                ReadingOutcome::TemporarilyUnavailable(detail)
-            } else {
-                ReadingOutcome::Error(detail)
-            }
-        }
-    };
     ProviderReading {
-        metric_id: MetricId(metric),
+        metric_id: metric,
         entity_id: entity,
         observation_time: None,
         interval_start: None,
-        outcome,
+        outcome: match result {
+            Ok(value) => ReadingOutcome::Value(SampleValue::Numeric(value)),
+            Err(error) => nv_error(error.to_string()),
+        },
+    }
+}
+
+#[cfg(feature = "nvidia")]
+fn nv_error(detail: String) -> ReadingOutcome {
+    let lower = detail.to_lowercase();
+    if lower.contains("not supported") || lower.contains("unsupported") {
+        ReadingOutcome::Unsupported(detail)
+    } else if lower.contains("permission") || lower.contains("not authorized") {
+        ReadingOutcome::PermissionDenied(detail)
+    } else if lower.contains("temporar") || lower.contains("lost") || lower.contains("reset") {
+        ReadingOutcome::TemporarilyUnavailable(detail)
+    } else {
+        ReadingOutcome::Error(detail)
     }
 }

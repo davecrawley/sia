@@ -35,8 +35,25 @@ impl ProviderReading {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MetricTarget {
+    pub descriptor: MetricDescriptor,
+    pub entity_id: EntityId,
+}
+
 pub trait MetricProvider {
     fn descriptors(&self) -> Vec<MetricDescriptor>;
+
+    fn targets(&self) -> Vec<MetricTarget> {
+        self.descriptors()
+            .into_iter()
+            .map(|descriptor| MetricTarget {
+                descriptor,
+                entity_id: EntityId("system".into()),
+            })
+            .collect()
+    }
+
     fn collect(&mut self, requested_at: ObservationTime) -> Vec<ProviderReading>;
 }
 
@@ -49,9 +66,11 @@ impl<C: Clock, P: MetricProvider> Collector<C, P> {
     pub fn new(clock: C, provider: P) -> Self {
         Self { clock, provider }
     }
+
     pub fn provider(&self) -> &P {
         &self.provider
     }
+
     pub fn provider_mut(&mut self) -> &mut P {
         &mut self.provider
     }
@@ -61,7 +80,7 @@ impl<C: Clock, P: MetricProvider> Collector<C, P> {
         let mut capabilities = Vec::new();
         let mut samples = Vec::new();
         for reading in self.provider.collect(requested_at) {
-            let at = reading.observation_time.unwrap_or(requested_at);
+            let observation_time = reading.observation_time.unwrap_or(requested_at);
             let (capability, sample) = match reading.outcome {
                 ReadingOutcome::Value(value) => (
                     Capability::available(),
@@ -106,7 +125,7 @@ impl<C: Clock, P: MetricProvider> Collector<C, P> {
             });
             if let Some((value, status)) = sample {
                 samples.push(MetricSample {
-                    observation_time: at,
+                    observation_time,
                     interval_start: reading.interval_start,
                     metric_id: reading.metric_id,
                     entity_id: reading.entity_id,

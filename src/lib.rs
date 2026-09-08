@@ -5,5 +5,5 @@ pub mod presentation;
 pub mod providers;
 
 pub use clock::{Clock, NativeClock};
-pub use collection::{Collector, MetricProvider, ProviderReading, ReadingOutcome};
+pub use collection::{Collector, MetricProvider, MetricTarget, ProviderReading, ReadingOutcome};
 pub use model::*;

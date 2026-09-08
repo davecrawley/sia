@@ -23,12 +23,24 @@ impl From<&str> for MetricId {
     }
 }
 
+impl From<String> for MetricId {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EntityId(pub String);
 
 impl From<&str> for EntityId {
     fn from(value: &str) -> Self {
         Self(value.to_owned())
+    }
+}
+
+impl From<String> for EntityId {
+    fn from(value: String) -> Self {
+        Self(value)
     }
 }
 
@@ -57,6 +69,7 @@ pub enum CanonicalUnit {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ValueKind {
     Gauge,
+    Rate,
     CumulativeCounter,
     State,
 }
@@ -64,6 +77,7 @@ pub enum ValueKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TemporalSemantics {
     PointSampled,
+    IntervalAverage,
     IntervalDelta,
     CumulativeCounter,
     VendorSampled,
@@ -111,6 +125,8 @@ pub struct MetricDescriptor {
 #[derive(Clone, Debug, PartialEq)]
 pub enum SampleValue {
     Numeric(f64),
+    Integer(i64),
+    Unsigned(u64),
     State(String),
 }
 
@@ -118,6 +134,8 @@ impl SampleValue {
     pub fn numeric(&self) -> Option<f64> {
         match self {
             Self::Numeric(value) => Some(*value),
+            Self::Integer(value) => Some(*value as f64),
+            Self::Unsigned(value) => Some(*value as f64),
             Self::State(_) => None,
         }
     }
@@ -189,18 +207,22 @@ impl SessionModel {
     pub fn descriptor(&self, id: &MetricId) -> Option<&MetricDescriptor> {
         self.descriptors.get(id)
     }
+
     pub fn descriptors(&self) -> impl Iterator<Item = &MetricDescriptor> {
         self.descriptors.values()
     }
+
     pub fn capability(&self, metric: &MetricId, entity: &EntityId) -> Option<&Capability> {
         self.capabilities.get(&(metric.clone(), entity.clone()))
     }
+
     pub fn samples(&self, metric: &MetricId, entity: &EntityId) -> &[MetricSample] {
         self.samples
             .get(&(metric.clone(), entity.clone()))
             .map(Vec::as_slice)
             .unwrap_or(&[])
     }
+
     pub fn latest(&self, metric: &MetricId, entity: &EntityId) -> Option<&MetricSample> {
         self.samples(metric, entity).last()
     }

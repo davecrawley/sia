@@ -20,7 +20,7 @@ pub fn current_value(model: &SessionModel, metric: &MetricId, entity: &EntityId)
                         .detail
                         .clone()
                         .unwrap_or_else(|| "unsupported".into()),
-                )
+                );
             }
             CapabilityStatus::PermissionDenied => {
                 return CurrentValue::PermissionDenied(
@@ -28,7 +28,7 @@ pub fn current_value(model: &SessionModel, metric: &MetricId, entity: &EntityId)
                         .detail
                         .clone()
                         .unwrap_or_else(|| "permission denied".into()),
-                )
+                );
             }
             CapabilityStatus::TemporarilyUnavailable if model.latest(metric, entity).is_none() => {
                 return CurrentValue::TemporarilyUnavailable(
@@ -36,7 +36,7 @@ pub fn current_value(model: &SessionModel, metric: &MetricId, entity: &EntityId)
                         .detail
                         .clone()
                         .unwrap_or_else(|| "temporarily unavailable".into()),
-                )
+                );
             }
             CapabilityStatus::Available | CapabilityStatus::TemporarilyUnavailable => {}
         }
@@ -61,6 +61,7 @@ pub fn current_value(model: &SessionModel, metric: &MetricId, entity: &EntityId)
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlotPoint {
     pub monotonic_ns: u64,
+    pub interval_start_ns: Option<u64>,
     pub value: f64,
 }
 
@@ -72,15 +73,15 @@ pub fn numeric_segments(
     let mut result = Vec::new();
     let mut segment = Vec::new();
     for sample in model.samples(metric, entity) {
-        let value = match (&sample.status, &sample.value) {
-            (SampleStatus::Ok, Some(SampleValue::Numeric(value))) if value.is_finite() => {
-                Some(*value)
-            }
-            _ => None,
+        let value = if sample.status == SampleStatus::Ok {
+            sample.value.as_ref().and_then(SampleValue::numeric)
+        } else {
+            None
         };
-        if let Some(value) = value {
+        if let Some(value) = value.filter(|value| value.is_finite()) {
             segment.push(PlotPoint {
                 monotonic_ns: sample.observation_time.monotonic_ns,
+                interval_start_ns: sample.interval_start.map(|time| time.monotonic_ns),
                 value,
             });
         } else if !segment.is_empty() {

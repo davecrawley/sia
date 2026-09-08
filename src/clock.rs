@@ -1,6 +1,4 @@
 use crate::model::{ObservationTime, LINUX_MONOTONIC_CLOCK};
-use std::sync::OnceLock;
-use std::time::Instant;
 
 pub trait Clock {
     fn domain(&self) -> &'static str;
@@ -35,21 +33,22 @@ impl Clock for NativeClock {
                 tv_sec: 0,
                 tv_nsec: 0,
             };
+            // SAFETY: `value` is a valid writable timespec for the duration of the call.
             let result = unsafe { clock_gettime(CLOCK_MONOTONIC, &mut value) };
-            if result == 0 && value.tv_sec >= 0 && value.tv_nsec >= 0 {
-                return ObservationTime {
-                    monotonic_ns: (value.tv_sec as u64)
-                        .saturating_mul(1_000_000_000)
-                        .saturating_add(value.tv_nsec as u64),
-                    clock_domain: LINUX_MONOTONIC_CLOCK,
-                };
-            }
+            assert_eq!(result, 0, "clock_gettime(CLOCK_MONOTONIC) failed");
+            assert!(
+                value.tv_sec >= 0 && (0..1_000_000_000).contains(&value.tv_nsec),
+                "clock_gettime returned an invalid CLOCK_MONOTONIC value"
+            );
+            return ObservationTime {
+                monotonic_ns: (value.tv_sec as u64)
+                    .saturating_mul(1_000_000_000)
+                    .saturating_add(value.tv_nsec as u64),
+                clock_domain: LINUX_MONOTONIC_CLOCK,
+            };
         }
-        static ORIGIN: OnceLock<Instant> = OnceLock::new();
-        let elapsed = ORIGIN.get_or_init(Instant::now).elapsed();
-        ObservationTime {
-            monotonic_ns: elapsed.as_nanos().min(u64::MAX as u128) as u64,
-            clock_domain: LINUX_MONOTONIC_CLOCK,
-        }
+
+        #[cfg(not(target_os = "linux"))]
+        panic!("NativeClock requires Linux CLOCK_MONOTONIC");
     }
 }

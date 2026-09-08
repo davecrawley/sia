@@ -12,8 +12,15 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 #[derive(Clone)]
+struct SeriesPoint {
+    time: f64,
+    interval_start: Option<f64>,
+    value: Option<f64>,
+}
+
+#[derive(Clone)]
 struct Series {
-    values: VecDeque<(f64, Option<f64>)>,
+    values: VecDeque<SeriesPoint>,
     capacity: usize,
 }
 
@@ -24,38 +31,42 @@ impl Series {
             capacity,
         }
     }
-    fn push(&mut self, time: f64, value: Option<f64>) {
+
+    fn push(&mut self, point: SeriesPoint) {
         if self.values.len() == self.capacity {
             self.values.pop_front();
         }
-        self.values
-            .push_back((time, value.filter(|value| value.is_finite())));
+        self.values.push_back(point);
     }
+
     fn last(&self) -> Option<f64> {
-        self.values.back().and_then(|(_, value)| *value)
+        self.values.back().and_then(|point| point.value)
     }
+
     fn min_max(&self, start: f64, end: f64, scale: f64) -> Option<(f64, f64)> {
         let mut min = f64::INFINITY;
         let mut max = f64::NEG_INFINITY;
-        for (time, value) in &self.values {
-            if *time >= start && *time <= end {
-                if let Some(value) = value {
-                    min = min.min(*value / scale);
-                    max = max.max(*value / scale);
+        for point in &self.values {
+            if point.time >= start && point.time <= end {
+                if let Some(value) = point.value {
+                    min = min.min(value / scale);
+                    max = max.max(value / scale);
                 }
             }
         }
         (min.is_finite() && max.is_finite()).then_some((min, max))
     }
+
     fn segments(&self, start: f64, scale: f64) -> Vec<PlotPoints> {
         let mut result = Vec::new();
         let mut current = Vec::new();
-        for (time, value) in &self.values {
-            if *time < start {
+        for point in &self.values {
+            if point.time < start {
                 continue;
             }
-            if let Some(value) = value {
-                current.push([*time, *value / scale]);
+            if let Some(value) = point.value {
+                let _native_interval_start = point.interval_start;
+                current.push([point.time, value / scale]);
             } else if !current.is_empty() {
                 result.push(PlotPoints::from(std::mem::take(&mut current)));
             }
@@ -159,53 +170,25 @@ struct App {
 impl App {
     fn new(capacity: usize, sample_hz: f64) -> Self {
         let provider = HostProvider::new();
+        let targets = provider.targets();
         let descriptors = provider.descriptors();
         let mut traces = Vec::new();
-        for descriptor in &descriptors {
+        for target in targets {
+            let descriptor = target.descriptor;
             if matches!(
                 descriptor.canonical_unit,
                 CanonicalUnit::Percent | CanonicalUnit::Celsius | CanonicalUnit::Hertz
             ) {
-                let entity = if descriptor.metric_id.0 == CPU_UTILIZATION
-                    || descriptor.metric_id.0 == RAM_UTILIZATION
-                {
-                    EntityId("system".into())
-                } else if descriptor.metric_id.0.starts_with("cpu.frequency.core.") {
-                    EntityId(format!(
-                        "cpu:{}",
-                        descriptor.metric_id.0.rsplit('.').next().unwrap_or("0")
-                    ))
-                } else if descriptor.metric_id.0.starts_with("thermal.") {
-                    EntityId(format!(
-                        "hwmon:{}",
-                        descriptor
-                            .metric_id
-                            .0
-                            .trim_start_matches("thermal.")
-                            .replace('.', ":")
-                            + "_input"
-                    ))
-                } else {
-                    EntityId(
-                        descriptor
-                            .metric_id
-                            .0
-                            .split('.')
-                            .take(3)
-                            .collect::<Vec<_>>()
-                            .join(":"),
-                    )
-                };
                 let scale = if descriptor.canonical_unit == CanonicalUnit::Hertz {
                     1_000_000_000.0
                 } else {
                     1.0
                 };
                 traces.push(Trace {
-                    metric: descriptor.metric_id.clone(),
-                    entity,
-                    label: descriptor.display_name.clone(),
-                    provider: descriptor.provider.clone(),
+                    metric: descriptor.metric_id,
+                    entity: target.entity_id,
+                    label: descriptor.display_name,
+                    provider: descriptor.provider,
                     visible: true,
                     color: color(traces.len()),
                     scale,
@@ -265,37 +248,58 @@ impl App {
             .get_or_insert(batch.observation_time.monotonic_ns);
         self.elapsed =
             batch.observation_time.monotonic_ns.saturating_sub(origin) as f64 / 1_000_000_000.0;
-        self.update_traces(&batch);
+        self.update_traces(&batch, origin);
         self.model.ingest(batch);
     }
 
-    fn update_traces(&mut self, batch: &CollectionBatch) {
+    fn update_traces(&mut self, batch: &CollectionBatch, origin: u64) {
         for trace in &mut self.traces {
-            let value = batch
-                .samples
-                .iter()
-                .rev()
-                .find(|sample| sample.metric_id == trace.metric && sample.entity_id == trace.entity)
-                .and_then(|sample| {
-                    if sample.status == SampleStatus::Ok {
-                        sample.value.as_ref().and_then(SampleValue::numeric)
-                    } else {
-                        None
-                    }
+            let matching = batch.samples.iter().filter(|sample| {
+                sample.metric_id == trace.metric && sample.entity_id == trace.entity
+            });
+            for sample in matching {
+                let value = if sample.status == SampleStatus::Ok {
+                    sample.value.as_ref().and_then(SampleValue::numeric)
+                } else {
+                    None
+                }
+                .filter(|value| value.is_finite());
+                trace.series.push(SeriesPoint {
+                    time: sample.observation_time.monotonic_ns.saturating_sub(origin) as f64
+                        / 1_000_000_000.0,
+                    interval_start: sample.interval_start.map(|time| {
+                        time.monotonic_ns.saturating_sub(origin) as f64 / 1_000_000_000.0
+                    }),
+                    value,
                 });
-            trace.series.push(self.elapsed, value);
+            }
+        }
+    }
+
+    fn state_text(&self, trace: &Trace) -> String {
+        match current_value(&self.model, &trace.metric, &trace.entity) {
+            CurrentValue::Value(_) => "ok".into(),
+            CurrentValue::Missing => "missing".into(),
+            CurrentValue::Stale => "stale".into(),
+            CurrentValue::Unsupported(_) => "unsupported".into(),
+            CurrentValue::PermissionDenied(_) => "permission denied".into(),
+            CurrentValue::TemporarilyUnavailable(_) => "unavailable".into(),
+            CurrentValue::Error(_) => "error".into(),
         }
     }
 
     fn summary(&self, key: &(MetricId, EntityId)) -> String {
         match current_value(&self.model, &key.0, &key.1) {
-            CurrentValue::Value(SampleValue::Numeric(value)) => format!("{value:.0}%"),
+            CurrentValue::Value(value) => value
+                .numeric()
+                .map(|value| format!("{value:.0}%"))
+                .unwrap_or_else(|| "state".into()),
             CurrentValue::Stale => "stale".into(),
             CurrentValue::TemporarilyUnavailable(_) => "unavailable".into(),
             CurrentValue::PermissionDenied(_) => "permission denied".into(),
             CurrentValue::Unsupported(_) => "unsupported".into(),
             CurrentValue::Error(_) => "error".into(),
-            CurrentValue::Missing | CurrentValue::Value(SampleValue::State(_)) => "missing".into(),
+            CurrentValue::Missing => "missing".into(),
         }
     }
 
@@ -335,9 +339,10 @@ impl App {
                             label.push_str(" 🥵");
                         }
                     }
+                    let state = self.state_text(trace);
                     ui.horizontal(|ui| {
                         ui.colored_label(trace.color, "●");
-                        ui.label(label);
+                        ui.label(format!("{label} [{state}]"));
                     });
                 }
             }
@@ -393,7 +398,7 @@ impl eframe::App for App {
                 ui.label(format!("CPU: {}", self.summary(&self.cpu_key)));
                 ui.separator();
                 ui.label(format!("RAM: {}", self.summary(&self.ram_key)));
-            })
+            });
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -524,22 +529,27 @@ impl eframe::App for App {
                     ui.toggle_value(&mut self.live_preview, "Live preview");
                 });
                 ui.heading("Sensors");
-                for group in &mut self.groups {
-                    egui::CollapsingHeader::new(group.name.clone()).show(ui, |ui| {
-                        ui.checkbox(&mut group.visible, "Show group");
-                        for index in &group.traces {
-                            let trace = &mut self.traces[*index];
+                for group_index in 0..self.groups.len() {
+                    let name = self.groups[group_index].name.clone();
+                    let trace_indices = self.groups[group_index].traces.clone();
+                    egui::CollapsingHeader::new(name).show(ui, |ui| {
+                        ui.checkbox(&mut self.groups[group_index].visible, "Show group");
+                        for index in trace_indices {
+                            let state = self.state_text(&self.traces[index]);
+                            let trace = &mut self.traces[index];
                             ui.checkbox(
                                 &mut trace.visible,
-                                format!("{} ({})", trace.label, trace.provider),
+                                format!("{} ({}) — {}", trace.label, trace.provider, state),
                             );
                         }
                     });
                 }
                 egui::CollapsingHeader::new("Frequencies").show(ui, |ui| {
-                    for trace in &mut self.traces {
-                        if trace.scale > 1.0 {
-                            ui.checkbox(&mut trace.visible, &trace.label);
+                    for index in 0..self.traces.len() {
+                        if self.traces[index].scale > 1.0 {
+                            let state = self.state_text(&self.traces[index]);
+                            let trace = &mut self.traces[index];
+                            ui.checkbox(&mut trace.visible, format!("{} — {}", trace.label, state));
                         }
                     }
                 });
