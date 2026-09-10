@@ -245,7 +245,6 @@ struct SensorGroup {
     visible: bool,
     warn: f64,
     hot: f64,
-    show_thresholds: bool,
 }
 
 fn classify(raw: &str) -> (String, String, f64, f64) {
@@ -379,7 +378,7 @@ fn theme_color(kind: &str) -> Color32 {
 }
 fn tint(c: Color32, factor: f32) -> Color32 {
     let (r, g, b, a) = (c.r() as f32, c.g() as f32, c.b() as f32, c.a());
-    let t = |v: f32| -> u8 { v.min(255.0).max(0.0) as u8 };
+    let t = |v: f32| -> u8 { v.clamp(0.0, 255.0) as u8 };
     Color32::from_rgba_unmultiplied(
         t(r + (255.0 - r) * factor),
         t(g + (255.0 - g) * factor),
@@ -399,7 +398,6 @@ fn build_groups() -> Vec<SensorGroup> {
             visible: true,
             warn,
             hot,
-            show_thresholds: false,
         });
         let label = nice_label(&display, &s.raw_label);
         entry.items.push(SensorItem {
@@ -591,7 +589,7 @@ impl App {
         #[cfg(feature = "nvidia")]
         let nv_opt = nvgpu::NvState::try_new();
         #[cfg(feature = "nvidia")]
-        let (mut temp_series, mut groups, gpu_temp_idx_opt) = {
+        let (temp_series, groups, gpu_temp_idx_opt) = {
             let mut temp_series = temp_series;
             let mut groups = groups;
             let idx = temp_series.len();
@@ -612,7 +610,6 @@ impl App {
                     visible: true,
                     warn: 85.0,
                     hot: 95.0,
-                    show_thresholds: false,
                 };
                 g.items.push(SensorItem {
                     name: "GPU (Core)".into(),
@@ -637,9 +634,6 @@ impl App {
             groups.sort_by_key(|g| rank(&g.key));
             (temp_series, groups, Some(idx))
         };
-        #[cfg(not(feature = "nvidia"))]
-        let (nv_opt, gpu_temp_idx_opt) = (None::<()> as Option<()>, None::<usize>);
-
         Self {
             start: Instant::now(),
             sys,
@@ -1204,16 +1198,10 @@ impl eframe::App for App {
                                                             );
                                                             ui.horizontal(|ui| {
                                                                 if ui.button("All").clicked() {
-                                                                    for v in &mut self.freq_visible
-                                                                    {
-                                                                        *v = true;
-                                                                    }
+                                                                    self.freq_visible.fill(true);
                                                                 }
                                                                 if ui.button("None").clicked() {
-                                                                    for v in &mut self.freq_visible
-                                                                    {
-                                                                        *v = false;
-                                                                    }
+                                                                    self.freq_visible.fill(false);
                                                                 }
                                                             });
                                                             for (i, fs) in
