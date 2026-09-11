@@ -1,10 +1,9 @@
 //! Hardware-independent telemetry contracts for SIA.
 //!
-//! Collection, storage, and presentation use these types without depending on
-//! egui, sysinfo, sysfs, procfs, or NVML. Platform adapters implement the small
-//! provider traits at the edge of the application.
+//! Collection, storage, and presentation depend on these types rather than on
+//! GUI state or concrete operating-system and vendor providers.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::error::Error;
 use std::ffi::{c_int, c_long};
 use std::fmt;
@@ -29,6 +28,12 @@ impl From<&str> for MetricId {
     }
 }
 
+impl From<String> for MetricId {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
 impl fmt::Display for MetricId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.0)
@@ -50,6 +55,12 @@ impl From<&str> for EntityId {
     }
 }
 
+impl From<String> for EntityId {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
 impl fmt::Display for EntityId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.0)
@@ -68,18 +79,6 @@ impl SeriesKey {
             metric_id: metric_id.into(),
             entity_id: entity_id.into(),
         }
-    }
-}
-
-impl From<String> for MetricId {
-    fn from(value: String) -> Self {
-        Self(value)
-    }
-}
-
-impl From<String> for EntityId {
-    fn from(value: String) -> Self {
-        Self(value)
     }
 }
 
@@ -346,10 +345,11 @@ impl MetricSample {
         if !matches!(self.status, SampleStatus::Ok) && self.value.is_some() {
             return Err(ModelError::UnavailableSampleWithValue);
         }
-        if let Some(start) = self.window_start_mono_ns {
-            if start > self.mono_ns {
-                return Err(ModelError::WindowEndsBeforeItStarts);
-            }
+        if self
+            .window_start_mono_ns
+            .is_some_and(|start| start > self.mono_ns)
+        {
+            return Err(ModelError::WindowEndsBeforeItStarts);
         }
         Ok(())
     }
@@ -428,7 +428,7 @@ impl Error for ClockError {}
 
 #[derive(Clone, Debug)]
 pub struct DeterministicClock {
-    readings: std::collections::VecDeque<u64>,
+    readings: VecDeque<u64>,
 }
 
 impl DeterministicClock {
@@ -467,11 +467,7 @@ pub struct Collector<C, P> {
     provider: P,
 }
 
-impl<C, P> Collector<C, P>
-where
-    C: Clock,
-    P: MetricProvider,
-{
+impl<C: Clock, P: MetricProvider> Collector<C, P> {
     pub fn new(clock: C, provider: P) -> Self {
         Self { clock, provider }
     }
@@ -495,18 +491,15 @@ where
             .provider
             .collect(observation_mono_ns)
             .into_iter()
-            .map(|reading| {
-                let mono_ns = reading.timing.end_mono_ns.unwrap_or(observation_mono_ns);
-                MetricSample {
-                    mono_ns,
-                    window_start_mono_ns: reading.timing.window_start_mono_ns,
-                    metric_id: reading.metric_id,
-                    entity_id: reading.entity_id,
-                    value: reading.value,
-                    status: reading.status,
-                    temporal_semantics: reading.timing.temporal_semantics,
-                    source_resolution_ns: reading.timing.source_resolution_ns,
-                }
+            .map(|reading| MetricSample {
+                mono_ns: reading.timing.end_mono_ns.unwrap_or(observation_mono_ns),
+                window_start_mono_ns: reading.timing.window_start_mono_ns,
+                metric_id: reading.metric_id,
+                entity_id: reading.entity_id,
+                value: reading.value,
+                status: reading.status,
+                temporal_semantics: reading.timing.temporal_semantics,
+                source_resolution_ns: reading.timing.source_resolution_ns,
             })
             .collect();
         Ok(CollectionBatch {
@@ -646,11 +639,7 @@ pub struct CpuUtilizationCollector<C, S> {
     metric_id: MetricId,
 }
 
-impl<C, S> CpuUtilizationCollector<C, S>
-where
-    C: Clock,
-    S: CpuSnapshotSource,
-{
+impl<C: Clock, S: CpuSnapshotSource> CpuUtilizationCollector<C, S> {
     pub fn new(clock: C, source: S) -> Self {
         Self {
             clock,
@@ -686,7 +675,7 @@ where
         let Some(window_start_mono_ns) = start else {
             return Ok(Vec::new());
         };
-        let timing_resolution = observation_ns.saturating_sub(window_start_mono_ns);
+        let resolution = observation_ns.saturating_sub(window_start_mono_ns);
         Ok(match values {
             Ok(values) => values
                 .into_iter()
@@ -698,7 +687,7 @@ where
                     value: Some(MetricValue::Float(value)),
                     status: SampleStatus::Ok,
                     temporal_semantics: TemporalSemantics::IntervalAverage,
-                    source_resolution_ns: Some(timing_resolution),
+                    source_resolution_ns: Some(resolution),
                 })
                 .collect(),
             Err(reason) => vec![MetricSample {
@@ -709,7 +698,7 @@ where
                 value: None,
                 status: SampleStatus::Error { reason },
                 temporal_semantics: TemporalSemantics::IntervalAverage,
-                source_resolution_ns: Some(timing_resolution),
+                source_resolution_ns: Some(resolution),
             }],
         })
     }
@@ -735,13 +724,12 @@ pub fn hwmon_entity_id(stable_parent: &str) -> EntityId {
 
 pub fn hwmon_series_key(stable_parent: &str, input_filename: &str) -> SeriesKey {
     SeriesKey::new(
-        MetricId::new(format!("temperature.{}", input_filename)),
+        MetricId::new(format!("temperature.{input_filename}")),
         hwmon_entity_id(stable_parent),
     )
 }
 
 pub fn discover_hwmon(root: impl AsRef<Path>) -> Vec<HwmonSensor> {
-    let root = root.as_ref();
     let Ok(entries) = fs::read_dir(root) else {
         return Vec::new();
     };
@@ -767,15 +755,14 @@ pub fn discover_hwmon(root: impl AsRef<Path>) -> Vec<HwmonSensor> {
             if !filename.starts_with("temp") || !filename.ends_with("_input") {
                 continue;
             }
-            let label_filename = filename.replace("_input", "_label");
-            let label = fs::read_to_string(base.join(label_filename))
+            let label = fs::read_to_string(base.join(filename.replace("_input", "_label")))
                 .ok()
                 .map(|value| value.trim().to_owned())
                 .filter(|value| !value.is_empty())
                 .unwrap_or_else(|| device_name.clone());
             sensors.push(HwmonSensor {
                 entity_id: hwmon_entity_id(&stable_parent),
-                metric_id: MetricId::new(format!("temperature.{}", filename)),
+                metric_id: MetricId::new(format!("temperature.{filename}")),
                 device_name: device_name.clone(),
                 label,
                 input_path,
@@ -812,15 +799,16 @@ fn stable_path_suffix(path: &Path) -> String {
     let selected = start
         .map(|index| &components[index..])
         .unwrap_or(&components);
-    let value = selected
-        .iter()
-        .filter_map(|component| match component {
-            Component::Normal(value) => Some(value.to_string_lossy()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join("/");
-    normalize_stable_path(&value)
+    normalize_stable_path(
+        &selected
+            .iter()
+            .filter_map(|component| match component {
+                Component::Normal(value) => Some(value.to_string_lossy()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("/"),
+    )
 }
 
 fn normalize_stable_path(value: &str) -> String {

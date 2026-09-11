@@ -26,6 +26,11 @@ nvml-wrapper = { version = "=0.11.0", optional = true }
 default = ["nvidia"]
 nvidia = ["nvml-wrapper"]
 
+[lints.rust]
+dead_code = "allow"
+unused_mut = "allow"
+unused_variables = "allow"
+
 [package.metadata.deb]
 maintainer = "David Crawley <dc@ubiquityrobotics.com>"
 copyright = "2025, David Crawley <dc@ubiquityrobotics.com>"
