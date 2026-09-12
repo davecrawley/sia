@@ -1,4 +1,3 @@
-//! Hardware-independent telemetry contracts for SIA.
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     error::Error,
@@ -189,21 +188,28 @@ impl SourceTiming {
             source_resolution_ns: None,
         }
     }
-    pub fn point(end: u64) -> Self {
+    pub fn at(s: TemporalSemantics, end: u64) -> Self {
         Self {
-            temporal_semantics: TemporalSemantics::PointSample,
+            temporal_semantics: s,
             end_mono_ns: Some(end),
             window_start_mono_ns: None,
             source_resolution_ns: None,
         }
+    }
+    pub fn point(end: u64) -> Self {
+        Self::at(TemporalSemantics::PointSample, end)
     }
     pub fn window(s: TemporalSemantics, start: u64, end: u64) -> Self {
         Self {
             temporal_semantics: s,
             end_mono_ns: Some(end),
             window_start_mono_ns: Some(start),
-            source_resolution_ns: Some(end.saturating_sub(start)),
+            source_resolution_ns: None,
         }
+    }
+    pub fn with_source_resolution(mut self, v: u64) -> Self {
+        self.source_resolution_ns = Some(v);
+        self
     }
 }
 #[derive(Clone, Debug, PartialEq)]
@@ -269,22 +275,6 @@ pub struct MetricSample {
     pub temporal_semantics: TemporalSemantics,
     pub source_resolution_ns: Option<u64>,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ModelError {
-    OkSampleWithoutValue,
-    UnavailableSampleWithValue,
-    WindowEndsBeforeItStarts,
-}
-impl fmt::Display for ModelError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::OkSampleWithoutValue => "an ok sample must contain a value",
-            Self::UnavailableSampleWithValue => "a non-ok sample must not contain a value",
-            Self::WindowEndsBeforeItStarts => "sample window starts after its end",
-        })
-    }
-}
-impl Error for ModelError {}
 impl MetricSample {
     pub fn series_key(&self) -> SeriesKey {
         SeriesKey::new(self.metric_id.clone(), self.entity_id.clone())
@@ -296,12 +286,38 @@ impl MetricSample {
         if !matches!(self.status, SampleStatus::Ok) && self.value.is_some() {
             return Err(ModelError::UnavailableSampleWithValue);
         }
+        if self
+            .value
+            .as_ref()
+            .and_then(MetricValue::as_f64)
+            .is_some_and(|v| !v.is_finite())
+        {
+            return Err(ModelError::NonFiniteNumericValue);
+        }
         if self.window_start_mono_ns.is_some_and(|s| s > self.mono_ns) {
             return Err(ModelError::WindowEndsBeforeItStarts);
         }
         Ok(())
     }
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModelError {
+    OkSampleWithoutValue,
+    UnavailableSampleWithValue,
+    WindowEndsBeforeItStarts,
+    NonFiniteNumericValue,
+}
+impl fmt::Display for ModelError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::OkSampleWithoutValue => "an ok sample must contain a value",
+            Self::UnavailableSampleWithValue => "a non-ok sample must not contain a value",
+            Self::WindowEndsBeforeItStarts => "sample window starts after its end",
+            Self::NonFiniteNumericValue => "numeric samples must be finite",
+        })
+    }
+}
+impl Error for ModelError {}
 pub trait Clock {
     fn domain(&self) -> &'static str;
     fn now_ns(&mut self) -> Result<u64, ClockError>;
@@ -321,7 +337,7 @@ struct Timespec {
     tv_sec: c_long,
     tv_nsec: c_long,
 }
-unsafe extern "C" {
+extern "C" {
     fn clock_gettime(id: c_int, t: *mut Timespec) -> c_int;
 }
 impl Clock for LinuxMonotonicClock {
@@ -391,7 +407,6 @@ impl<C: Clock, P: MetricProvider> Collector<C, P> {
     }
     pub fn collect(&mut self) -> Result<CollectionBatch, ClockError> {
         let now = self.clock.now_ns()?;
-        let descriptors = self.provider.descriptors();
         let samples = self
             .provider
             .collect(now)
@@ -410,7 +425,7 @@ impl<C: Clock, P: MetricProvider> Collector<C, P> {
         Ok(CollectionBatch {
             clock_domain: self.clock.domain(),
             observation_mono_ns: now,
-            descriptors,
+            descriptors: self.provider.descriptors(),
             samples,
         })
     }
@@ -438,32 +453,33 @@ impl MetricStore {
         self.samples.get(k).map(Vec::as_slice).unwrap_or(&[])
     }
     pub fn project(&self) -> PresentationProjection {
-        let mut series = vec![];
-        for (k, samples) in &self.samples {
-            let Some(d) = self.descriptors.get(&k.metric_id) else {
-                continue;
-            };
-            if matches!(d.capability_state, CapabilityState::Unsupported { .. }) {
-                continue;
-            }
-            let records: Vec<_> = samples
-                .iter()
-                .map(|s| PresentedSample {
-                    mono_ns: s.mono_ns,
-                    window_start_mono_ns: s.window_start_mono_ns,
-                    value: s.value.clone(),
-                    status: s.status.clone(),
-                    temporal_semantics: s.temporal_semantics,
-                    source_resolution_ns: s.source_resolution_ns,
+        let series = self
+            .samples
+            .iter()
+            .filter_map(|(k, samples)| {
+                let d = self.descriptors.get(&k.metric_id)?;
+                if matches!(d.capability_state, CapabilityState::Unsupported { .. }) {
+                    return None;
+                }
+                let records: Vec<_> = samples
+                    .iter()
+                    .map(|s| PresentedSample {
+                        mono_ns: s.mono_ns,
+                        window_start_mono_ns: s.window_start_mono_ns,
+                        value: s.value.clone(),
+                        status: s.status.clone(),
+                        temporal_semantics: s.temporal_semantics,
+                        source_resolution_ns: s.source_resolution_ns,
+                    })
+                    .collect();
+                Some(PresentedSeries {
+                    key: k.clone(),
+                    descriptor: d.clone(),
+                    segments: numeric_segments(&records),
+                    records,
                 })
-                .collect();
-            series.push(PresentedSeries {
-                key: k.clone(),
-                descriptor: d.clone(),
-                segments: numeric_segments(&records),
-                records,
-            });
-        }
+            })
+            .collect();
         PresentationProjection { series }
     }
 }
@@ -493,10 +509,13 @@ pub struct PresentationProjection {
     pub series: Vec<PresentedSeries>,
 }
 fn numeric_segments(r: &[PresentedSample]) -> Vec<Vec<PresentedPoint>> {
-    let (mut out, mut current) = (vec![], vec![]);
+    let (mut out, mut current) = (Vec::new(), Vec::new());
     for x in r {
         let v = if matches!(x.status, SampleStatus::Ok) {
-            x.value.as_ref().and_then(MetricValue::as_f64)
+            x.value
+                .as_ref()
+                .and_then(MetricValue::as_f64)
+                .filter(|v| v.is_finite())
         } else {
             None
         };
@@ -543,8 +562,9 @@ impl<C: Clock, S: CpuSnapshotSource> CpuUtilizationCollector<C, S> {
             provider: ProviderId::Sysinfo,
             capability_state: CapabilityState::Available,
             source_resolution_ns: None,
-            source_semantics: "CPU busy time averaged between successive refresh observations"
-                .into(),
+            source_semantics:
+                "CPU busy time averaged between successive CLOCK_MONOTONIC refresh observations"
+                    .into(),
             comparability_group: Some("linux.cpu.utilization".into()),
             semantics_version: 1,
         }
@@ -552,11 +572,9 @@ impl<C: Clock, S: CpuSnapshotSource> CpuUtilizationCollector<C, S> {
     pub fn refresh(&mut self) -> Result<Vec<MetricSample>, ClockError> {
         let end = self.clock.now_ns()?;
         let values = self.source.refresh_cpu_utilization();
-        let start = self.previous_observation_ns.replace(end);
-        let Some(start) = start else {
-            return Ok(vec![]);
+        let Some(start) = self.previous_observation_ns.replace(end) else {
+            return Ok(Vec::new());
         };
-        let resolution = Some(end.saturating_sub(start));
         Ok(match values {
             Ok(v) => v
                 .into_iter()
@@ -568,7 +586,7 @@ impl<C: Clock, S: CpuSnapshotSource> CpuUtilizationCollector<C, S> {
                     value: Some(MetricValue::Float(value)),
                     status: SampleStatus::Ok,
                     temporal_semantics: TemporalSemantics::IntervalAverage,
-                    source_resolution_ns: resolution,
+                    source_resolution_ns: None,
                 })
                 .collect(),
             Err(reason) => vec![MetricSample {
@@ -579,7 +597,7 @@ impl<C: Clock, S: CpuSnapshotSource> CpuUtilizationCollector<C, S> {
                 value: None,
                 status: SampleStatus::Error { reason },
                 temporal_semantics: TemporalSemantics::IntervalAverage,
-                source_resolution_ns: resolution,
+                source_resolution_ns: None,
             }],
         })
     }
@@ -614,16 +632,13 @@ fn normalize(v: &str) -> String {
 fn stable_parent(base: &Path) -> String {
     let p = fs::canonicalize(base.join("device")).unwrap_or_else(|_| base.to_path_buf());
     let c: Vec<_> = p.components().collect();
-    let i=c.iter().position(|x|matches!(x,Component::Normal(v) if {let s=v.to_string_lossy();s=="devices"||s.starts_with("pci")||s.starts_with("platform")||s.starts_with("virtual")})).unwrap_or(0);
+    let i=c.iter().position(|x|matches!(x,Component::Normal(v)if{let s=v.to_string_lossy();s=="devices"||s.starts_with("pci")||s.starts_with("platform")||s.starts_with("virtual")})).unwrap_or(0);
     normalize(
         &c[i..]
             .iter()
-            .filter_map(|x| {
-                if let Component::Normal(v) = x {
-                    Some(v.to_string_lossy())
-                } else {
-                    None
-                }
+            .filter_map(|x| match x {
+                Component::Normal(v) => Some(v.to_string_lossy()),
+                _ => None,
             })
             .collect::<Vec<_>>()
             .join("/"),
@@ -631,9 +646,9 @@ fn stable_parent(base: &Path) -> String {
 }
 pub fn discover_hwmon(root: impl AsRef<Path>) -> Vec<HwmonSensor> {
     let Ok(entries) = fs::read_dir(root) else {
-        return vec![];
+        return Vec::new();
     };
-    let mut out = vec![];
+    let mut out = Vec::new();
     for e in entries.flatten() {
         let b = e.path();
         let name = fs::read_to_string(b.join("name"))
@@ -714,7 +729,7 @@ pub trait NvidiaBackend {
     fn device_indices(&self) -> Vec<u32>;
     fn identity(&self, i: u32) -> Result<NvidiaIdentity, String>;
     fn descriptors(&self, i: u32) -> Result<Vec<MetricDescriptor>, String>;
-    fn begin_device_sample(&mut self, _: u32) -> Result<(), String> {
+    fn begin_device_sample(&mut self, _i: u32) -> Result<(), String> {
         Ok(())
     }
     fn read_metric(&mut self, i: u32, m: &MetricId, t: u64) -> Result<ProviderReading, String>;
@@ -768,7 +783,7 @@ impl<B: NvidiaBackend> NvidiaCollector<B> {
         self.inventory = discover_nvidia(&self.backend)
     }
     pub fn sample(&mut self, t: u64) -> Vec<ProviderReading> {
-        let mut out = vec![];
+        let mut out = Vec::new();
         for d in &self.inventory.devices {
             if let Err(reason) = self.backend.begin_device_sample(d.acquisition_index) {
                 for m in &d.metrics {
@@ -776,7 +791,7 @@ impl<B: NvidiaBackend> NvidiaCollector<B> {
                         m.metric_id.clone(),
                         d.entity_id.clone(),
                         reason.clone(),
-                        SourceTiming::observed(m.temporal_semantics),
+                        SourceTiming::at(m.temporal_semantics, t),
                     ));
                 }
                 continue;
@@ -794,7 +809,7 @@ impl<B: NvidiaBackend> NvidiaCollector<B> {
                         m.metric_id.clone(),
                         d.entity_id.clone(),
                         reason,
-                        SourceTiming::observed(m.temporal_semantics),
+                        SourceTiming::at(m.temporal_semantics, t),
                     )),
                 }
             }
@@ -874,11 +889,11 @@ impl MonitorRegressionProjection {
         }
         Self {
             attributed_baseline: BASELINE_REVISION,
-            display_window_seconds: 120.,
-            display_window_range: (30., 900.),
+            display_window_seconds: 120.0,
+            display_window_range: (30.0, 900.0),
             legend_placement: LegendPlacement::Footer,
-            applied_font_size: 14.,
-            pending_font_size: 14.,
+            applied_font_size: 14.0,
+            pending_font_size: 14.0,
             font_is_white: true,
             live_font_preview: false,
             cpu_frequency_visibility: ids.into_iter().map(|x| (x, true)).collect(),
@@ -891,7 +906,7 @@ impl MonitorRegressionProjection {
         }
     }
     pub fn x_bounds(&self, now: f64) -> (f64, f64) {
-        ((now - self.display_window_seconds).max(0.), now)
+        ((now - self.display_window_seconds).max(0.0), now)
     }
     pub fn set_display_window(&mut self, v: f64) {
         self.display_window_seconds =
@@ -939,7 +954,7 @@ impl MonitorRegressionProjection {
     }
     pub fn displayed_memory_clock_mhz(&self, v: f64) -> f64 {
         if self.nvidia_effective_memory_clock {
-            v * 2.
+            v * 2.0
         } else {
             v
         }
