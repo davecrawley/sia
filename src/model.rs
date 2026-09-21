@@ -1,95 +1,26 @@
-use crate::clock::Timestamp;
+use std::time::Duration;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Unavailable {
-    Unsupported(String),
-    PermissionDenied(String),
-    TemporarilyUnavailable(String),
-}
-
-impl Unavailable {
-    pub fn reason(&self) -> &str {
-        match self {
-            Self::Unsupported(reason)
-            | Self::PermissionDenied(reason)
-            | Self::TemporarilyUnavailable(reason) => reason,
-        }
-    }
+pub struct ClockIdentity {
+    pub domain: String,
+    pub boot_id: String,
+    pub time_namespace_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Capability {
-    Available,
-    Unavailable(Unavailable),
+pub struct Timestamp {
+    pub identity: ClockIdentity,
+    pub mono_ns: u64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Unit {
-    Percent,
-    Celsius,
-    Hertz,
-    Bytes,
-    Count,
-    Seconds,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ValueKind {
-    Gauge,
-    Counter,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TemporalSemantics {
-    Instantaneous,
-    Interval,
-    VendorSampled,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MetricDescriptor {
-    pub metric_id: String,
-    pub entity_id: String,
-    pub entity_name: String,
-    pub display_name: String,
-    pub unit: Unit,
-    pub value_kind: ValueKind,
-    pub temporal_semantics: TemporalSemantics,
-    pub provider: String,
-    pub source_semantics: String,
-    pub semantics_version: u32,
-    pub capability: Capability,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum Value {
-    Float(f64),
-    Unsigned(u64),
-    Signed(i64),
-}
-
-impl Value {
-    pub fn as_f64(&self) -> f64 {
-        match self {
-            Self::Float(value) => *value,
-            Self::Unsigned(value) => *value as f64,
-            Self::Signed(value) => *value as f64,
+impl Timestamp {
+    pub fn elapsed_since(&self, previous: &Self) -> Option<Duration> {
+        if self.identity != previous.identity {
+            return None;
         }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum Reading {
-    Available(Value),
-    Unavailable(Unavailable),
-}
-
-impl Reading {
-    pub fn capability(&self) -> Capability {
-        match self {
-            Self::Available(_) => Capability::Available,
-            Self::Unavailable(reason) => Capability::Unavailable(reason.clone()),
-        }
+        self.mono_ns
+            .checked_sub(previous.mono_ns)
+            .map(Duration::from_nanos)
     }
 }
 
@@ -100,25 +31,150 @@ pub struct ObservationWindow {
 }
 
 impl ObservationWindow {
-    pub fn elapsed_ns(&self) -> Option<u64> {
+    pub fn elapsed(&self) -> Option<Duration> {
         self.end.elapsed_since(&self.start)
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnavailableKind {
+    Unsupported,
+    PermissionDenied,
+    TemporarilyUnavailable,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Unavailable {
+    pub kind: UnavailableKind,
+    pub reason: String,
+}
+
+impl Unavailable {
+    pub fn new(kind: UnavailableKind, reason: impl Into<String>) -> Self {
+        Self {
+            kind,
+            reason: reason.into(),
+        }
+    }
+
+    pub fn temporary(reason: impl Into<String>) -> Self {
+        Self::new(UnavailableKind::TemporarilyUnavailable, reason)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Capability {
+    Available,
+    Unsupported(String),
+    PermissionDenied(String),
+    TemporarilyUnavailable(String),
+}
+
+impl From<&Unavailable> for Capability {
+    fn from(value: &Unavailable) -> Self {
+        match value.kind {
+            UnavailableKind::Unsupported => Self::Unsupported(value.reason.clone()),
+            UnavailableKind::PermissionDenied => Self::PermissionDenied(value.reason.clone()),
+            UnavailableKind::TemporarilyUnavailable => {
+                Self::TemporarilyUnavailable(value.reason.clone())
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntityKind {
+    System,
+    Cpu,
+    Gpu,
+    Sensor,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Unit {
+    Percent,
+    Bytes,
+    Celsius,
+    Hertz,
+    Count,
+    State,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ValueKind {
+    Gauge,
+    Counter,
+    Rate,
+    State,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TemporalSemantics {
+    PointSample,
+    IntervalAverage,
+    IntervalDelta,
+    CumulativeCounter,
+    VendorSampled,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MetricDescriptor {
+    pub metric_id: String,
+    pub entity_id: String,
+    pub entity_kind: EntityKind,
+    pub entity_display_name: String,
+    pub display_name: String,
+    pub unit: Unit,
+    pub value_kind: ValueKind,
+    pub temporal_semantics: TemporalSemantics,
+    pub provider: String,
+    pub source_semantics: String,
+    pub source_resolution_hint: Option<Duration>,
+    pub comparability_group: Option<String>,
+    pub semantics_version: u32,
+    pub capability: Capability,
+}
+
 #[derive(Clone, Debug, PartialEq)]
-pub struct Sample {
+pub enum MetricValue {
+    Float(f64),
+    Signed(i64),
+    Unsigned(u64),
+    State(String),
+}
+
+impl MetricValue {
+    pub fn as_f64(&self) -> Option<f64> {
+        match self {
+            Self::Float(value) => Some(*value),
+            Self::Signed(value) => Some(*value as f64),
+            Self::Unsigned(value) => Some(*value as f64),
+            Self::State(_) => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MetricSample {
     pub metric_id: String,
     pub entity_id: String,
     pub observed_at: Timestamp,
-    /// A timestamp supplied by the source, when the source actually provides one.
     pub source_timestamp: Option<Timestamp>,
-    /// Unknown vendor averaging windows remain absent rather than being inferred.
     pub observation_window: Option<ObservationWindow>,
-    pub reading: Reading,
+    pub value: Result<MetricValue, Unavailable>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct ProviderBatch {
+pub struct ProviderOutput {
     pub descriptors: Vec<MetricDescriptor>,
-    pub samples: Vec<Sample>,
+    pub samples: Vec<MetricSample>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CollectionBatch {
+    pub observed_at: Timestamp,
+    pub elapsed: Option<Duration>,
+    pub discontinuity: bool,
+    pub descriptors: Vec<MetricDescriptor>,
+    pub samples: Vec<MetricSample>,
 }

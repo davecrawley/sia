@@ -1,107 +1,72 @@
+use crate::model::Timestamp;
 use std::io;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ClockIdentity {
-    pub domain: String,
-    pub boot_id: String,
-    pub time_namespace: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Timestamp {
-    pub identity: ClockIdentity,
-    pub nanoseconds: u64,
-}
-
-impl Timestamp {
-    pub fn elapsed_since(&self, previous: &Self) -> Option<u64> {
-        if self.identity != previous.identity {
-            return None;
-        }
-        self.nanoseconds.checked_sub(previous.nanoseconds)
-    }
-}
 
 pub trait Clock {
     fn now(&mut self) -> io::Result<Timestamp>;
 }
 
-/// Native Linux CLOCK_MONOTONIC, accompanied by boot and time-namespace identity.
+/// Reads the host clock and its identity, without initializing graphics.
 #[derive(Default)]
-pub struct LinuxClock;
+pub struct NativeClock;
 
-#[cfg(all(target_os = "linux", target_pointer_width = "64"))]
-impl Clock for LinuxClock {
+#[cfg(target_os = "linux")]
+impl Clock for NativeClock {
     fn now(&mut self) -> io::Result<Timestamp> {
+        use crate::model::ClockIdentity;
         use std::os::raw::{c_int, c_long};
 
         #[repr(C)]
         struct Timespec {
-            seconds: c_long,
-            nanoseconds: c_long,
+            tv_sec: c_long,
+            tv_nsec: c_long,
         }
 
         extern "C" {
             fn clock_gettime(clock_id: c_int, value: *mut Timespec) -> c_int;
         }
 
-        fn identity() -> io::Result<ClockIdentity> {
-            let boot_id = std::fs::read_to_string("/proc/sys/kernel/random/boot_id")?;
-            let namespace = match std::fs::read_link("/proc/self/ns/time") {
-                Ok(path) => path.to_string_lossy().into_owned(),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    // Kernels predating time namespaces have one initial namespace.
-                    "initial_namespace_without_time_namespace_support".to_string()
-                }
-                Err(error) => return Err(error),
-            };
-            Ok(ClockIdentity {
-                domain: "linux_clock_monotonic".to_string(),
-                boot_id: boot_id.trim().to_string(),
-                time_namespace: namespace,
-            })
-        }
-
-        let before = identity()?;
+        let boot_id = std::fs::read_to_string("/proc/sys/kernel/random/boot_id")?
+            .trim()
+            .to_owned();
+        let time_namespace_id = std::fs::read_link("/proc/self/ns/time")?
+            .to_string_lossy()
+            .into_owned();
         let mut value = Timespec {
-            seconds: 0,
-            nanoseconds: 0,
+            tv_sec: 0,
+            tv_nsec: 0,
         };
-        // SAFETY: value is a writable native Linux 64-bit timespec. The call
-        // writes it synchronously; CLOCK_MONOTONIC is clock ID 1 on Linux.
+        // Linux CLOCK_MONOTONIC is 1. The C ABI writes one initialized timespec.
         if unsafe { clock_gettime(1, &mut value) } != 0 {
             return Err(io::Error::last_os_error());
         }
-        let after = identity()?;
-        if before != after {
-            return Err(io::Error::new(
-                io::ErrorKind::Interrupted,
-                "clock identity changed during observation",
-            ));
+        let seconds = u64::try_from(value.tv_sec)
+            .map_err(|_| io::Error::other("negative monotonic clock"))?;
+        let nanos = u64::try_from(value.tv_nsec)
+            .map_err(|_| io::Error::other("negative clock nanoseconds"))?;
+        if nanos >= 1_000_000_000 {
+            return Err(io::Error::other("invalid clock nanoseconds"));
         }
-        if value.seconds < 0 || !(0..1_000_000_000).contains(&value.nanoseconds) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "invalid CLOCK_MONOTONIC timestamp",
-            ));
-        }
-        let nanoseconds = (value.seconds as u64)
+        let mono_ns = seconds
             .checked_mul(1_000_000_000)
-            .and_then(|seconds| seconds.checked_add(value.nanoseconds as u64))
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "clock overflow"))?;
+            .and_then(|seconds| seconds.checked_add(nanos))
+            .ok_or_else(|| io::Error::other("monotonic timestamp overflow"))?;
         Ok(Timestamp {
-            identity: after,
-            nanoseconds,
+            identity: ClockIdentity {
+                domain: "linux_clock_monotonic".into(),
+                boot_id,
+                time_namespace_id,
+            },
+            mono_ns,
         })
     }
 }
 
-#[cfg(not(all(target_os = "linux", target_pointer_width = "64")))]
-impl Clock for LinuxClock {
+#[cfg(not(target_os = "linux"))]
+impl Clock for NativeClock {
     fn now(&mut self) -> io::Result<Timestamp> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
-            "native collection requires a 64-bit Linux CLOCK_MONOTONIC implementation",
+            "native collection requires Linux CLOCK_MONOTONIC",
         ))
     }
 }
