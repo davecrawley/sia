@@ -3,7 +3,7 @@ use egui::{Align2, Color32, FontFamily, FontId, RichText, TextStyle};
 use egui_plot::{Corner, Legend, Line, Plot, PlotBounds, PlotPoints, Text};
 use sia::clock::NativeClock;
 use sia::collection::Collector;
-use sia::model::{MetricDescriptor, Timestamp, Unit};
+use sia::model::{CollectionBatch, MetricDescriptor, Timestamp, Unit};
 use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
 
@@ -31,8 +31,15 @@ impl RollingSeries {
         self.points.push_back([x, y]);
     }
 
+    fn has_values(&self) -> bool {
+        self.points.iter().any(|point| point[1].is_finite())
+    }
+
     fn last_y(&self) -> Option<f64> {
-        self.points.back().map(|point| point[1])
+        self.points
+            .back()
+            .map(|point| point[1])
+            .filter(|value| value.is_finite())
     }
 
     fn min_max(&self, xmin: f64, xmax: f64, scale: f64) -> Option<(f64, f64)> {
@@ -52,7 +59,6 @@ impl RollingSeries {
     }
 
     fn draw(&self, ui: &mut egui_plot::PlotUi, xmin: f64, scale: f64, name: &str, color: Color32) {
-        // Separate segments prevent interpolation through unavailable samples.
         let mut segment = Vec::new();
         for &[x, y] in &self.points {
             if x < xmin {
@@ -114,7 +120,7 @@ fn classify(raw: &str) -> (String, String, f64, f64) {
     } else if raw_lower.contains("spd") {
         ("ramspd", "Memory (SPD Hub)", 70.0, 85.0)
     } else if raw_lower.contains("iwlwifi") {
-        ("wifi", "Wi‑Fi Controller (iwlwifi)", 80.0, 90.0)
+        ("wifi", "Wi-Fi Controller (iwlwifi)", 80.0, 90.0)
     } else if raw_lower.contains("r8169") {
         ("eth", "Ethernet Controller (r8169)", 80.0, 90.0)
     } else if raw_lower.contains("igc") {
@@ -222,10 +228,7 @@ fn rank(key: &str) -> u8 {
 fn build_groups(metrics: &[ViewMetric]) -> Vec<SensorGroup> {
     let mut groups: BTreeMap<String, SensorGroup> = BTreeMap::new();
     for (index, metric) in metrics.iter().enumerate() {
-        if metric.descriptor.unit != Unit::Celsius {
-            continue;
-        }
-        if metric.descriptor.entity_id == "gpu:nvidia:unresolved" {
+        if metric.descriptor.unit != Unit::Celsius || !metric.series.has_values() {
             continue;
         }
         let (key, display, warn, hot) = classify(&metric.descriptor.entity_display_name);
@@ -244,19 +247,21 @@ fn build_groups(metrics: &[ViewMetric]) -> Vec<SensorGroup> {
             color: Color32::WHITE,
         });
     }
-    // CPU frequencies remain controllable even on systems without CPU thermals.
-    if metrics
-        .iter()
-        .any(|metric| metric.descriptor.metric_id == "cpu.frequency")
-    {
-        groups.entry("cpu".into()).or_insert_with(|| SensorGroup {
-            key: "cpu".into(),
-            display: "CPU".into(),
-            items: Vec::new(),
-            visible: true,
-            warn: 90.0,
-            hot: 100.0,
-        });
+    for (key, display) in [("cpu", "CPU"), ("gpu", "GPU")] {
+        if metrics.iter().any(|metric| {
+            metric.descriptor.unit == Unit::Hertz
+                && metric.series.has_values()
+                && (metric.descriptor.metric_id == "cpu.frequency") == (key == "cpu")
+        }) {
+            groups.entry(key.into()).or_insert_with(|| SensorGroup {
+                key: key.into(),
+                display: display.into(),
+                items: Vec::new(),
+                visible: true,
+                warn: 90.0,
+                hot: 100.0,
+            });
+        }
     }
     for group in groups.values_mut() {
         let preferred = group
@@ -268,7 +273,7 @@ fn build_groups(metrics: &[ViewMetric]) -> Vec<SensorGroup> {
             })
             .unwrap_or(0);
         for (index, item) in group.items.iter_mut().enumerate() {
-            item.visible = index == preferred;
+            item.visible = index == preferred || group.key == "gpu";
             item.color = tint(theme_color(&group.key), index as f32 * 0.08);
         }
         group.items.sort_by_key(|item| {
@@ -351,17 +356,20 @@ impl App {
     }
 
     fn sample(&mut self) {
-        let batch = match self.collector.collect() {
-            Ok(batch) => batch,
+        match self.collector.collect() {
+            Ok(batch) => self.ingest(batch),
             Err(error) => {
                 self.collection_error = Some(error.to_string());
-                // Break each plotted line without inventing another timestamp.
                 for metric in &mut self.metrics {
                     metric.series.push(self.seconds, f64::NAN);
                 }
-                return;
             }
-        };
+        }
+    }
+
+    /// The same ingestion path accepts captured production batches without an
+    /// eframe window, allowing a verifier to render them in a standalone egui frame.
+    fn ingest(&mut self, batch: CollectionBatch) {
         self.collection_error = None;
         let relative = self
             .origin
@@ -377,7 +385,6 @@ impl App {
             self.seconds = relative.as_secs_f64();
         }
         self.sample_count += 1;
-        let mut added = false;
         for descriptor in batch.descriptors {
             if let Some(metric) = self.metrics.iter_mut().find(|metric| {
                 metric.descriptor.metric_id == descriptor.metric_id
@@ -392,7 +399,6 @@ impl App {
                     visible,
                     color: palette(self.metrics.len()),
                 });
-                added = true;
             }
         }
         for metric in &mut self.metrics {
@@ -414,29 +420,29 @@ impl App {
                 .unwrap_or(self.seconds);
             metric.series.push(time, value);
         }
-        if added {
-            let mut groups = build_groups(&self.metrics);
-            for group in &mut groups {
-                if let Some(old) = self.groups.iter().find(|old| old.key == group.key) {
-                    group.visible = old.visible;
-                    for item in &mut group.items {
-                        if let Some(old_item) = old.items.iter().find(|old| old.index == item.index)
-                        {
-                            item.visible = old_item.visible;
-                            item.color = old_item.color;
-                        }
+        // Rebuild when capability/history changes too, not only when descriptors
+        // are first seen: a previously unavailable sensor may have just recovered.
+        let mut groups = build_groups(&self.metrics);
+        for group in &mut groups {
+            if let Some(old) = self.groups.iter().find(|old| old.key == group.key) {
+                group.visible = old.visible;
+                for item in &mut group.items {
+                    if let Some(old_item) = old.items.iter().find(|old| old.index == item.index) {
+                        item.visible = old_item.visible;
+                        item.color = old_item.color;
                     }
                 }
             }
-            self.groups = groups;
         }
+        self.groups = groups;
     }
 
     fn latest(&self, id: &str) -> String {
         self.metrics
             .iter()
             .filter(|metric| metric.descriptor.metric_id == id)
-            .find_map(|metric| metric.series.last_y().filter(|value| value.is_finite()))
+            .filter(|metric| id != "cpu.utilization" || metric.descriptor.entity_id == "system:cpu")
+            .find_map(|metric| metric.series.last_y())
             .map(|value| format!("{value:.0}%"))
             .unwrap_or_else(|| "unavailable".into())
     }
@@ -450,7 +456,7 @@ impl App {
     }
 
     fn utilization(&self, ui: &mut egui::Ui, xmin: f64, xmax: f64) {
-        ui.heading("Utilization");
+        ui.heading("Utilization, capacity occupancy and pressure (%)");
         Plot::new("util")
             .height(220.0)
             .allow_scroll(true)
@@ -458,23 +464,18 @@ impl App {
             .legend(Legend::default().position(Corner::LeftTop))
             .show(ui, |plot| {
                 plot.set_plot_bounds(PlotBounds::from_min_max([xmin, 0.0], [xmax, 100.0]));
-                for (id, color) in [
-                    ("cpu.utilization", "cpu"),
-                    ("gpu.utilization", "gpu"),
-                    ("memory.occupancy", "ramspd"),
-                    ("gpu.memory.occupancy", "nvme"),
-                ] {
-                    for metric in &self.metrics {
-                        if metric.descriptor.metric_id == id {
-                            metric.series.draw(
-                                plot,
-                                xmin,
-                                1.0,
-                                &metric.descriptor.display_name,
-                                theme_color(color),
-                            );
-                        }
-                    }
+                for metric in self.metrics.iter().filter(|metric| {
+                    metric.visible
+                        && metric.descriptor.unit == Unit::Percent
+                        && metric.series.has_values()
+                }) {
+                    metric.series.draw(
+                        plot,
+                        xmin,
+                        1.0,
+                        &metric.descriptor.display_name,
+                        metric.color,
+                    );
                 }
                 for tick in 0..=4 {
                     let y = f64::from(tick) * 25.0;
@@ -536,7 +537,11 @@ impl App {
         let frequencies: Vec<_> = self
             .metrics
             .iter()
-            .filter(|metric| metric.visible && metric.descriptor.unit == Unit::Hertz)
+            .filter(|metric| {
+                metric.visible
+                    && metric.descriptor.unit == Unit::Hertz
+                    && metric.series.has_values()
+            })
             .collect();
         let mut min = f64::INFINITY;
         let mut max = f64::NEG_INFINITY;
@@ -567,15 +572,15 @@ impl App {
                     let name = if self.gpu_mem_effective
                         && metric.descriptor.metric_id == "gpu.clock.memory"
                     {
-                        "GPU Memory (effective)"
+                        format!("{} (effective x2)", metric.descriptor.display_name)
                     } else {
-                        &metric.descriptor.display_name
+                        metric.descriptor.display_name.clone()
                     };
                     metric.series.draw(
                         plot,
                         xmin,
                         self.frequency_scale(metric),
-                        name,
+                        &name,
                         metric.color,
                     );
                 }
@@ -593,13 +598,19 @@ impl App {
         ui.label(RichText::new("Legend:").strong());
         for group in self.groups.iter().filter(|group| group.visible) {
             for item in group.items.iter().filter(|item| item.visible) {
+                let series = &self.metrics[item.index].series;
+                if !series.has_values() {
+                    continue;
+                }
                 let mut text = item.name.clone();
-                if let Some(value) = self.metrics[item.index].series.last_y() {
+                if let Some(value) = series.last_y() {
                     if value >= group.hot {
                         text.push_str(" 🔥");
                     } else if value >= group.warn {
                         text.push_str(" 🥵");
                     }
+                } else {
+                    text.push_str(" — unavailable");
                 }
                 ui.horizontal(|ui| {
                     ui.colored_label(item.color, "●");
@@ -607,6 +618,59 @@ impl App {
                 });
             }
         }
+    }
+
+    fn details(&self, ui: &mut egui::Ui) {
+        egui::CollapsingHeader::new("Current values and capabilities").show(ui, |ui| {
+            for metric in &self.metrics {
+                let value = metric
+                    .series
+                    .last_y()
+                    .map(|value| match metric.descriptor.unit {
+                        Unit::Bytes => format!("{value:.0} bytes"),
+                        Unit::Percent => format!("{value:.2}%"),
+                        Unit::Celsius => format!("{value:.1} °C"),
+                        Unit::Hertz => format!("{value:.0} Hz"),
+                        _ => format!("{value}"),
+                    })
+                    .unwrap_or_else(|| "unavailable".into());
+                ui.label(format!("{}: {}", metric.descriptor.display_name, value))
+                    .on_hover_text(format!(
+                        "{}\n{:?}\n{:?}",
+                        metric.descriptor.source_semantics,
+                        metric.descriptor.temporal_semantics,
+                        metric.descriptor.capability
+                    ));
+            }
+        });
+        let status = self.collector.session_status();
+        if status.environment_changed {
+            ui.label("Environment changed: device topology or reset. Earlier observations remain in the trace.");
+        }
+        egui::CollapsingHeader::new("Device lifecycle").show(ui, |ui| {
+            for device in &status.devices {
+                ui.label(format!(
+                    "{} [{}] — {:?}, generation {}; PCI {:?}; driver {} {:?}",
+                    device.display_name,
+                    device.entity_id,
+                    device.state,
+                    device.generation,
+                    device.pci_address,
+                    device.driver,
+                    device.driver_version
+                ));
+            }
+            for event in &status.events {
+                ui.label(format!(
+                    "{} ns: {} generation {} {:?}: {}",
+                    event.observed_at.mono_ns,
+                    event.entity_id,
+                    event.generation,
+                    event.state,
+                    event.reason
+                ));
+            }
+        });
     }
 
     fn settings(&mut self, ui: &mut egui::Ui) {
@@ -620,7 +684,7 @@ impl App {
             egui::ComboBox::from_label("Legend placement")
                 .selected_text(match self.legend_place {
                     LegendPlacement::Footer => "Footer",
-                    LegendPlacement::Side => "Side",
+                    LegendPlacement::Side => "Side strip",
                 })
                 .show_ui(ui, |ui| {
                     ui.selectable_value(&mut self.legend_place, LegendPlacement::Footer, "Footer");
@@ -684,6 +748,7 @@ impl App {
                                             let is_cpu = group.key == "cpu";
                                             let matches = |metric: &&mut ViewMetric| {
                                                 metric.descriptor.unit == Unit::Hertz
+                                                    && metric.series.has_values()
                                                     && (metric.descriptor.metric_id
                                                         == "cpu.frequency")
                                                         == is_cpu
@@ -711,14 +776,10 @@ impl App {
                                                 );
                                             }
                                             for metric in self.metrics.iter_mut().filter(matches) {
-                                                if metric.descriptor.entity_id
-                                                    != "gpu:nvidia:unresolved"
-                                                {
-                                                    ui.checkbox(
-                                                        &mut metric.visible,
-                                                        &metric.descriptor.display_name,
-                                                    );
-                                                }
+                                                ui.checkbox(
+                                                    &mut metric.visible,
+                                                    &metric.descriptor.display_name,
+                                                );
                                             }
                                         },
                                     );
@@ -797,7 +858,10 @@ impl eframe::App for App {
             ui.separator();
             egui::ScrollArea::vertical()
                 .auto_shrink([false; 2])
-                .show(ui, |ui| self.settings(ui));
+                .show(ui, |ui| {
+                    self.details(ui);
+                    self.settings(ui);
+                });
         });
     }
 }
